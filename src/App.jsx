@@ -1117,8 +1117,33 @@ export default function App() {
       {showSplash && (
         <div className="daypay-splash">
           <div className="splash-content">
-            <div className="splash-logo">
-              <img src="/daypay-logo.svg" alt="DayPay" className="splash-logo-img" />
+            <div className="splash-scene" aria-hidden="true">
+              <svg className="splash-cal" viewBox="0 0 170 172" width="168" height="170">
+                <rect className="sc-ring" x="62" y="6" width="10" height="20" rx="5"/>
+                <rect className="sc-ring" x="98" y="6" width="10" height="20" rx="5"/>
+                <rect className="sc-body" x="15" y="18" width="140" height="140" rx="18"/>
+                <rect className="sc-head" x="15" y="18" width="140" height="34" rx="18"/>
+                <rect className="sc-head2" x="15" y="38" width="140" height="14"/>
+                <circle className="sc-dot" cx="85" cy="35" r="4.5"/>
+                {(() => {
+                  // month-so-far story: days stamp in one by one, a few stay upcoming
+                  const types = ['ok','ok','ok','ok','wk','ok','ok','ot','ok','wk','ok','ok','p','p','p']
+                  let stamp = -1
+                  return types.map((type, i) => {
+                    const x = 27 + (i % 5) * 26
+                    const y = 68 + Math.floor(i / 5) * 26
+                    if (type === 'p') return <rect key={i} className="sc-pend" x={x} y={y} width="20" height="20" rx="6"/>
+                    stamp += 1
+                    const cls = type === 'wk' ? ' sc-wknd' : type === 'ot' ? ' sc-ot' : ''
+                    return (
+                      <g key={i} className={`sc-cell${cls}`} style={{ animationDelay: `${(0.5 + stamp * 0.085).toFixed(3)}s`, transformOrigin: `${x + 10}px ${y + 11}px` }}>
+                        <rect x={x} y={y} width="20" height="20" rx="6"/>
+                        <text x={x + 10} y={y + 11}>₦</text>
+                      </g>
+                    )
+                  })
+                })()}
+              </svg>
             </div>
             <div className="splash-tagline">Know what your work is worth.</div>
             <div className="splash-loader">
