@@ -1,0 +1,14 @@
+/* DayPay — Know what your work is worth.
+   Copyright © 2026 Akaninyene. All rights reserved.
+   Unauthorized copying, modification, or distribution is prohibited. */
+
+import { createClient } from '@supabase/supabase-js'
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+export const isSupabaseConfigured = !!(supabaseUrl && supabaseAnonKey)
+
+export const supabase = isSupabaseConfigured
+  ? createClient(supabaseUrl, supabaseAnonKey)
+  : null

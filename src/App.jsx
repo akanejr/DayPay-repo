@@ -1,0 +1,1659 @@
+/* DayPay — Know what your work is worth.
+   Copyright © 2026 Akaninyene. All rights reserved.
+   Unauthorized copying, modification, or distribution is prohibited. */
+
+import { useState, useEffect, useMemo, useRef } from 'react'
+import { supabase, isSupabaseConfigured } from './lib/supabase'
+import jsPDF from 'jspdf'
+
+const STORAGE_KEY = 'work_tracker_v1'
+const START_KEY = 'work_tracker_start_v1'
+
+function formatDateKey(d) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+function isWeekendDay(dateObj) {
+  const day = dateObj.getDay()
+  return day === 0 || day === 6
+}
+function formatNaira(n) {
+  return `₦${Number(n).toLocaleString('en-NG')}`
+}
+function getMonthName(monthIndex, short = false) {
+  const names = short
+    ? ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+    : ['January','February','March','April','May','June','July','August','September','October','November','December']
+  return names[monthIndex]
+}
+function monthKey(year, month) {
+  return `${year}-${String(month+1).padStart(2,'0')}`
+}
+function parseMonthKey(key) {
+  const [y,m] = key.split('-').map(Number)
+  return { year: y, month: m-1 }
+}
+function ordDay(n) {
+  if (n >= 11 && n <= 13) return `${n}th`
+  switch (n % 10) { case 1: return `${n}st`; case 2: return `${n}nd`; case 3: return `${n}rd`; default: return `${n}th` }
+}
+// Leave & absence types. Paid leave accrues the regular daily rate (salaried
+// pay doesn't drop); unpaid leave accrues nothing. Stored on the attendance
+// record so locking, sync, projection and export all follow automatically.
+// Default leave types — user-managed in Settings (add / rename / delete / set pay).
+// payMode 'percent' = share of the daily rate · 'flat' = fixed ₦ per day.
+// Existing logged entries always keep their original amounts (future-only changes).
+const DEFAULT_LEAVE_TYPES = [
+  { id: 'annual', name: 'Annual leave', payMode: 'percent', payValue: 100 },
+  { id: 'sick', name: 'Sick leave', payMode: 'percent', payValue: 100 },
+  { id: 'permission', name: 'Permission', payMode: 'percent', payValue: 100 },
+  { id: 'unpaid', name: 'Unpaid leave', payMode: 'percent', payValue: 0 },
+]
+
+// Nigerian Public Holidays - Fixed + some movable for 2024-2027 (fallback if API fails)
+function getNigerianHolidaysFallback(year) {
+  const fixed = [
+    { month: 0, day: 1, name: "New Year's Day" },
+    { month: 4, day: 1, name: "Workers' Day" },
+    { month: 5, day: 12, name: "Democracy Day" },
+    { month: 9, day: 1, name: "Independence Day" },
+    { month: 11, day: 25, name: "Christmas Day" },
+    { month: 11, day: 26, name: "Boxing Day" },
+  ]
+  const movable = {
+    2024: [
+      { month: 2, day: 29, name: "Good Friday" },
+      { month: 3, day: 1, name: "Easter Monday" },
+      { month: 3, day: 10, name: "Eid al-Fitr" },
+      { month: 5, day: 16, name: "Eid al-Adha" },
+    ],
+    2025: [
+      { month: 3, day: 18, name: "Good Friday" },
+      { month: 3, day: 21, name: "Easter Monday" },
+      { month: 2, day: 30, name: "Eid al-Fitr" },
+      { month: 5, day: 6, name: "Eid al-Adha" },
+    ],
+    2026: [
+      { month: 3, day: 3, name: "Good Friday" },
+      { month: 3, day: 6, name: "Easter Monday" },
+      { month: 2, day: 20, name: "Eid al-Fitr" },
+      { month: 4, day: 27, name: "Eid al-Adha" },
+    ],
+    2027: [
+      { month: 2, day: 26, name: "Good Friday" },
+      { month: 2, day: 29, name: "Easter Monday" },
+      { month: 2, day: 9, name: "Eid al-Fitr" },
+      { month: 4, day: 16, name: "Eid al-Adha" },
+    ]
+  }
+  return [...fixed, ...(movable[year] || [])]
+}
+
+function isHolidayDayFallback(dateObj) {
+  if (!dateObj) return null
+  const holidays = getNigerianHolidaysFallback(dateObj.getFullYear())
+  const found = holidays.find(h => h.month === dateObj.getMonth() && h.day === dateObj.getDate())
+  return found || null
+}
+
+export default function App() {
+  const [currentDate, setCurrentDate] = useState(() => new Date())
+  const [view, setView] = useState('month')
+  const [attendance, setAttendance] = useState({})
+  const [settings, setSettings] = useState({ dailyRate: 16000, weekendMultiplier: 2, holidayMultiplier: 2, salaryGoal: 500000, paydayDay: 0 })
+  const [startMonthKey, setStartMonthKey] = useState(null)
+  const [showSettings, setShowSettings] = useState(false)
+  const [showFutureDays, setShowFutureDays] = useState(false)
+  const [rateInput, setRateInput] = useState('16000')
+  const [goalInput, setGoalInput] = useState('500000')
+  const [paydayInput, setPaydayInput] = useState('0')
+  const [ltDraft, setLtDraft] = useState(null)
+  const [loaded, setLoaded] = useState(false)
+
+  // Nigerian holidays from Nager.Date API (free, no key)
+  const [holidaysMap, setHolidaysMap] = useState({}) // key: YYYY-MM-DD -> {name, date, localName}
+  const [holidaysLoading, setHolidaysLoading] = useState(false)
+
+  // Cloud / Auth
+  const [user, setUser] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [showAuth, setShowAuth] = useState(false)
+  const [authMode, setAuthMode] = useState('signin')
+  const [authForm, setAuthForm] = useState({ email: '', password: '', name: '' })
+  const [authError, setAuthError] = useState('')
+  const [authBusy, setAuthBusy] = useState(false)
+  const [syncStatus, setSyncStatus] = useState('idle')
+  const [cloudError, setCloudError] = useState('')
+  const syncTimeoutRef = useRef(null)
+  const hasPushedInitialLocalRef = useRef(false)
+
+  const [profileName, setProfileName] = useState('')
+  const [profileSaving, setProfileSaving] = useState(false)
+
+  const [theme, setTheme] = useState(() => {
+    try { return localStorage.getItem('work_tracker_theme') || 'light' } catch { return 'light' }
+  })
+
+  const [showForgot, setShowForgot] = useState(false)
+  const [forgotEmail, setForgotEmail] = useState('')
+  const [forgotSent, setForgotSent] = useState(false)
+  const [forgotBusy, setForgotBusy] = useState(false)
+  const [showRecovery, setShowRecovery] = useState(false)
+  const [newPassword, setNewPassword] = useState('')
+  const [recoveryBusy, setRecoveryBusy] = useState(false)
+  const [recoveryError, setRecoveryError] = useState('')
+
+  const [editingKey, setEditingKey] = useState(null)
+  const [editingDate, setEditingDate] = useState(null)
+
+  const [showHamburgerMenu, setShowHamburgerMenu] = useState(false)
+  const hamburgerMenuRef = useRef(null)
+
+  const [showShareMenu, setShowShareMenu] = useState(false)
+  const shareMenuRef = useRef(null)
+
+  const [showSplash, setShowSplash] = useState(true)
+  const splashStartRef = useRef(Date.now())
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    try { localStorage.setItem('work_tracker_theme', theme) } catch {}
+  }, [theme])
+
+  useEffect(() => {
+    if (!loaded) return
+    if (authLoading && isSupabaseConfigured) return
+    const elapsed = Date.now() - splashStartRef.current
+    const minDuration = 3000
+    const remaining = Math.max(0, minDuration - elapsed)
+    const t = setTimeout(() => setShowSplash(false), remaining)
+    return () => clearTimeout(t)
+  }, [loaded, authLoading])
+
+  const [realCurrentDate, setRealCurrentDate] = useState(() => new Date())
+  useEffect(() => {
+    const updateReal = () => setRealCurrentDate(new Date())
+    const onVis = () => { if (document.visibilityState === 'visible') updateReal() }
+    document.addEventListener('visibilitychange', onVis)
+    const iv = setInterval(updateReal, 60*1000)
+    return () => { document.removeEventListener('visibilitychange', onVis); clearInterval(iv) }
+  }, [])
+
+  const year = currentDate.getFullYear()
+  const month = currentDate.getMonth()
+  const realYear = realCurrentDate.getFullYear()
+  const realMonth = realCurrentDate.getMonth()
+
+  // Fetch Nigerian public holidays from Nager.Date API (free, no key, exact dates)
+  useEffect(() => {
+    const yearsToFetch = new Set([year, realYear])
+    // Also fetch next year if viewing Dec and real is Dec? For future months
+    yearsToFetch.add(realYear + 1)
+    yearsToFetch.add(year + 1)
+    yearsToFetch.add(year - 1)
+
+    const fetchHolidays = async () => {
+      setHolidaysLoading(true)
+      try {
+        for (const y of yearsToFetch) {
+          if (y < 2020 || y > 2030) continue
+          // Skip if we already have holidays for this year
+          const hasYear = Object.keys(holidaysMap).some(k => k.startsWith(`${y}-`))
+          if (hasYear) continue
+          try {
+            const res = await fetch(`https://date.nager.at/api/v3/PublicHolidays/${y}/NG`)
+            if (!res.ok) throw new Error('Failed')
+            const data = await res.json()
+            // data is array of {date: "2026-01-01", localName, name, ...}
+            setHolidaysMap(prev => {
+              const next = { ...prev }
+              data.forEach(h => {
+                next[h.date] = { name: h.name, localName: h.localName, date: h.date }
+              })
+              return next
+            })
+          } catch (e) {
+            // Fallback to hardcoded if API fails
+            const fallback = getNigerianHolidaysFallback(y)
+            setHolidaysMap(prev => {
+              const next = { ...prev }
+              fallback.forEach(h => {
+                const mm = String(h.month+1).padStart(2,'0')
+                const dd = String(h.day).padStart(2,'0')
+                const key = `${y}-${mm}-${dd}`
+                if (!next[key]) next[key] = { name: h.name, localName: h.name, date: key }
+              })
+              return next
+            })
+          }
+        }
+      } finally {
+        setHolidaysLoading(false)
+      }
+    }
+    fetchHolidays()
+  }, [year, realYear])
+
+  // Helper to check if a date is holiday (API first, then fallback)
+  function isHolidayDay(dateObj) {
+    if (!dateObj) return null
+    const key = formatDateKey(dateObj)
+    if (holidaysMap[key]) return holidaysMap[key]
+    return isHolidayDayFallback(dateObj)
+  }
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (hamburgerMenuRef.current && !hamburgerMenuRef.current.contains(e.target)) setShowHamburgerMenu(false)
+    }
+    if (showHamburgerMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showHamburgerMenu])
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (shareMenuRef.current && !shareMenuRef.current.contains(e.target)) setShowShareMenu(false)
+    }
+    if (showShareMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showShareMenu])
+
+  // Draft copy of leave types while the Settings modal is open (applied on Save)
+  useEffect(() => {
+    if (showSettings) setLtDraft(leaveTypes.map(t => ({ ...t })))
+  }, [showSettings]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Collapse the "Log a future day" chips when navigating months
+  useEffect(() => { setShowFutureDays(false) }, [year, month])
+
+  // Load local
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      let loadedAttendance = {}
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (parsed.attendance) { loadedAttendance = parsed.attendance; setAttendance(parsed.attendance) }
+        if (parsed.settings) {
+          setSettings({
+            dailyRate: parsed.settings.dailyRate ?? 16000,
+            weekendMultiplier: parsed.settings.weekendMultiplier ?? 2,
+            holidayMultiplier: parsed.settings.holidayMultiplier ?? 2,
+            salaryGoal: parsed.settings.salaryGoal ?? 500000,
+            paydayDay: parsed.settings.paydayDay ?? 0,
+            startMonthKey: parsed.settings.startMonthKey
+          })
+          setRateInput(String(parsed.settings.dailyRate ?? 16000))
+          setGoalInput(String(parsed.settings.salaryGoal ?? 500000))
+          setPaydayInput(String(parsed.settings.paydayDay ?? 0))
+          if (parsed.settings.startMonthKey) {
+            setStartMonthKey(parsed.settings.startMonthKey)
+            localStorage.setItem(START_KEY, parsed.settings.startMonthKey)
+          }
+        }
+      }
+      const startRaw = localStorage.getItem(START_KEY)
+      if (startRaw) setStartMonthKey(startRaw)
+      else {
+        let startKey
+        const keys = Object.keys(loadedAttendance)
+        if (keys.length > 0) {
+          const monthKeys = keys.map(k => k.slice(0,7)).sort()
+          startKey = monthKeys[0]
+        } else {
+          const now = new Date()
+          startKey = monthKey(now.getFullYear(), now.getMonth())
+        }
+        localStorage.setItem(START_KEY, startKey)
+        setStartMonthKey(startKey)
+      }
+    } catch {}
+    setLoaded(true)
+  }, [])
+
+  useEffect(() => {
+    if (!loaded) return
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ attendance, settings }))
+      if (startMonthKey) localStorage.setItem(START_KEY, startMonthKey)
+    } catch {}
+  }, [attendance, settings, startMonthKey, loaded])
+
+  // Auth init
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) { setAuthLoading(false); return }
+    supabase.auth.getSession().then(({ data }) => {
+      const u = data.session?.user ?? null
+      setUser(u)
+      if (u) setProfileName(u.user_metadata?.full_name || '')
+      setAuthLoading(false)
+    })
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') { setShowRecovery(true); setShowAuth(false) }
+      const u = session?.user ?? null
+      setUser(u)
+      if (u) setProfileName(u.user_metadata?.full_name || '')
+    })
+    return () => listener.subscription.unsubscribe()
+  }, [])
+
+  // Fetch cloud
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) return
+    if (!user) { setSyncStatus('idle'); return }
+    const fetchCloud = async () => {
+      setSyncStatus('syncing'); setCloudError('')
+      try {
+        const { data, error } = await supabase.from('user_data').select('attendance, settings').eq('user_id', user.id).single()
+        if (error && error.code !== 'PGRST116') throw error
+        if (data) {
+          const cloudAttendance = data.attendance || {}
+          const cloudSettings = data.settings || { dailyRate: 16000, weekendMultiplier: 2, holidayMultiplier: 2, salaryGoal: 500000, paydayDay: 0 }
+          if (cloudSettings.startMonthKey && !startMonthKey) setStartMonthKey(cloudSettings.startMonthKey)
+          const mergedAttendance = { ...cloudAttendance }
+          let hasOfflineNew = false
+          for (const k in attendance) { if (!mergedAttendance[k]) { mergedAttendance[k] = attendance[k]; hasOfflineNew = true } }
+          setAttendance(mergedAttendance)
+          const mergedSettings = { ...cloudSettings }
+          if (startMonthKey && !mergedSettings.startMonthKey) mergedSettings.startMonthKey = startMonthKey
+          if (mergedSettings.startMonthKey) setStartMonthKey(mergedSettings.startMonthKey)
+          setSettings({
+            dailyRate: mergedSettings.dailyRate ?? 16000,
+            weekendMultiplier: mergedSettings.weekendMultiplier ?? 2,
+            holidayMultiplier: mergedSettings.holidayMultiplier ?? 2,
+            salaryGoal: mergedSettings.salaryGoal ?? 500000,
+            paydayDay: mergedSettings.paydayDay ?? 0
+          })
+          setRateInput(String(mergedSettings.dailyRate ?? 16000))
+          setGoalInput(String(mergedSettings.salaryGoal ?? 500000))
+          setPaydayInput(String(mergedSettings.paydayDay ?? 0))
+          if (hasOfflineNew) {
+            await supabase.from('user_data').upsert({
+              user_id: user.id,
+              attendance: mergedAttendance,
+              settings: { ...mergedSettings, startMonthKey: mergedSettings.startMonthKey || startMonthKey },
+              updated_at: new Date().toISOString(),
+            })
+          }
+        } else {
+          const settingsToSave = { ...settings, startMonthKey: startMonthKey || monthKey(new Date().getFullYear(), new Date().getMonth()) }
+          await supabase.from('user_data').upsert({ user_id: user.id, attendance, settings: settingsToSave, updated_at: new Date().toISOString() })
+          if (!startMonthKey) setStartMonthKey(settingsToSave.startMonthKey)
+        }
+        setSyncStatus('synced'); setTimeout(()=>setSyncStatus('idle'),2000)
+      } catch (e) { setCloudError(e.message || 'Failed to load cloud data'); setSyncStatus('error') }
+    }
+    fetchCloud()
+  }, [user])
+
+  useEffect(() => {
+    if (!loaded) return
+    if (!isSupabaseConfigured || !supabase) return
+    if (!user) return
+    if (!hasPushedInitialLocalRef.current) { hasPushedInitialLocalRef.current = true; return }
+    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
+    setSyncStatus('syncing')
+    syncTimeoutRef.current = setTimeout(async () => {
+      try {
+        const settingsToSave = { ...settings, startMonthKey }
+        const { error } = await supabase.from('user_data').upsert({ user_id: user.id, attendance, settings: settingsToSave, updated_at: new Date().toISOString() })
+        if (error) throw error
+        setSyncStatus('synced'); setTimeout(()=>setSyncStatus('idle'),2000)
+      } catch (e) { setCloudError(e.message || 'Sync failed'); setSyncStatus('error') }
+    }, 800)
+    return () => { if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current) }
+  }, [attendance, settings, startMonthKey, user, loaded])
+
+  function getMonthStatus(y, m) {
+    if (!startMonthKey) return 'active'
+    const { year: sY, month: sM } = parseMonthKey(startMonthKey)
+    const startTotal = sY*12 + sM
+    const viewTotal = y*12 + m
+    const realTotal = realYear*12 + realMonth
+    if (viewTotal < startTotal) return 'before_start'
+    if (viewTotal < realTotal) return 'locked'
+    if (viewTotal === realTotal) return 'active'
+    return 'future'
+  }
+
+  const monthStatus = getMonthStatus(year, month)
+  const isEditable = monthStatus === 'active'
+
+  const calendarData = useMemo(() => {
+    const firstDay = new Date(year, month, 1)
+    const lastDay = new Date(year, month + 1, 0)
+    const daysInMonth = lastDay.getDate()
+    const mondayOffset = (firstDay.getDay() + 6) % 7
+    return { mondayOffset, daysInMonth }
+  }, [year, month])
+
+  // Month-so-far grid (v9): the active month shows only the 1st → today,
+  // plus any days already logged ahead. Locked months stay complete.
+  // Future / before-start months show no grid at all.
+  const gridPrefix = `${year}-${String(month + 1).padStart(2, '0')}-`
+  let maxLoggedDay = 0
+  for (const k in attendance) if (k.startsWith(gridPrefix)) { const d = parseInt(k.slice(8), 10); if (d > maxLoggedDay) maxLoggedDay = d }
+  const gridEndDay = monthStatus === 'active'
+    ? Math.max(realCurrentDate.getDate(), maxLoggedDay)
+    : calendarData.daysInMonth
+  const calendarCells = useMemo(() => {
+    const cells = []
+    for (let i = 0; i < calendarData.mondayOffset; i++) cells.push(null)
+    for (let d = 1; d <= gridEndDay; d++) cells.push(new Date(year, month, d))
+    if (monthStatus !== 'active') {
+      const remaining = cells.length % 7 === 0 ? 0 : 7 - (cells.length % 7)
+      for (let i = 0; i < remaining; i++) cells.push(null)
+    }
+    return cells
+  }, [calendarData, gridEndDay, monthStatus, year, month])
+  const futureDays = monthStatus === 'active'
+    ? Array.from({ length: Math.max(0, calendarData.daysInMonth - gridEndDay) }, (_, i) => gridEndDay + 1 + i)
+    : []
+
+  // ---- Leave types & absence (user-managed) ----
+  const leaveTypes = Array.isArray(settings.leaveTypes) ? settings.leaveTypes : DEFAULT_LEAVE_TYPES
+  const ltById = (id) => leaveTypes.find(t => t.id === id)
+  const leavePayFor = (lt, rate) => !lt ? 0 : (lt.payMode === 'flat'
+    ? Math.max(0, Number(lt.payValue) || 0)
+    : Math.round((rate * Math.max(0, Number(lt.payValue) || 0)) / 100))
+  const leaveLabel = (id) => ltById(id)?.name || 'Leave'
+
+  const monthlyStats = useMemo(() => {
+    const prefix = `${year}-${String(month + 1).padStart(2, '0')}-`
+    let total = 0, days = 0, weekendDays = 0, regularDays = 0, overtimeDays = 0, holidayDays = 0, leaveDays = 0, leavePay = 0
+    for (const key in attendance) {
+      if (key.startsWith(prefix)) {
+        const rec = attendance[key]
+        total += rec.amount
+        if (rec.isLeave) { leaveDays += 1; leavePay += rec.amount }
+        else {
+          days += 1
+          if (rec.isWeekend) weekendDays += 1
+          else if (rec.isOvertime) overtimeDays += 1
+          else if (rec.isHoliday) holidayDays += 1
+          else regularDays += 1
+        }
+      }
+    }
+    return { total, days, weekendDays, regularDays, overtimeDays, holidayDays, leaveDays, leavePay }
+  }, [attendance, year, month])
+
+  const yearlyStats = useMemo(() => {
+    const prefix = `${year}-`
+    let total = 0, days = 0, weekendDays = 0, overtimeDays = 0, holidayDays = 0, regularDays = 0, leaveDays = 0, leavePay = 0
+    const monthly = Array.from({ length: 12 }, (_, m) => ({ month: m, total: 0, days: 0, status: getMonthStatus(year, m) }))
+    for (const key in attendance) {
+      if (key.startsWith(prefix)) {
+        const rec = attendance[key]
+        const m = parseInt(key.slice(5, 7), 10) - 1
+        if (m >=0 && m <12) { monthly[m].total += rec.amount; if (!rec.isLeave) monthly[m].days += 1 }
+        total += rec.amount
+        if (rec.isLeave) { leaveDays += 1; leavePay += rec.amount }
+        else {
+          days += 1
+          if (rec.isWeekend) weekendDays += 1
+          else if (rec.isOvertime) overtimeDays += 1
+          else if (rec.isHoliday) holidayDays += 1
+          else regularDays += 1
+        }
+      }
+    }
+    return { total, days, weekendDays, overtimeDays, holidayDays, regularDays, leaveDays, leavePay, monthly }
+  }, [attendance, year, realYear, realMonth, startMonthKey])
+
+  const todayKey = formatDateKey(new Date())
+
+  function handleCellClick(dateObj) {
+    if (!dateObj) return
+    if (!isEditable) return
+    const key = formatDateKey(dateObj)
+    const record = attendance[key]
+    const isWeekend = isWeekendDay(dateObj)
+    const holiday = isHolidayDay(dateObj)
+
+    if (isWeekend) {
+      setAttendance(prev => {
+        const next = { ...prev }
+        if (next[key]) delete next[key]
+        else {
+          const amount = settings.dailyRate * settings.weekendMultiplier
+          next[key] = { date: key, amount, isWeekend: true, isOvertime: false, isHoliday: false, rate: settings.dailyRate, multiplier: settings.weekendMultiplier }
+        }
+        return next
+      })
+    } else if (holiday) {
+      // Holiday - toggle with holiday rate
+      setAttendance(prev => {
+        const next = { ...prev }
+        if (next[key]) delete next[key]
+        else {
+          const amount = settings.dailyRate * settings.holidayMultiplier
+          next[key] = { date: key, amount, isWeekend: false, isOvertime: false, isHoliday: true, holidayName: holiday.name, rate: settings.dailyRate, multiplier: settings.holidayMultiplier }
+        }
+        return next
+      })
+    } else {
+      if (!record) {
+        setAttendance(prev => ({
+          ...prev,
+          [key]: { date: key, amount: settings.dailyRate, isWeekend: false, isOvertime: false, isHoliday: false, rate: settings.dailyRate, multiplier: 1 }
+        }))
+      } else {
+        setEditingKey(key)
+        setEditingDate(dateObj)
+      }
+    }
+  }
+
+  function handleEditButtonClick(e, dateObj) {
+    e.stopPropagation()
+    if (!isEditable) return
+    const key = formatDateKey(dateObj)
+    setEditingKey(key)
+    setEditingDate(dateObj)
+  }
+
+  function handleOvertimeAction(action) {
+    if (!editingKey) return
+    const key = editingKey
+    if (action === 'remove') {
+      setAttendance(prev => { const next = { ...prev }; delete next[key]; return next })
+    } else if (action === 'regular') {
+      setAttendance(prev => {
+        const rec = prev[key]
+        if (!rec) return prev
+        return { ...prev, [key]: { ...rec, isOvertime: false, isWeekend: false, isHoliday: false, isLeave: false, leaveType: undefined, amount: rec.rate, multiplier: 1, holidayName: undefined } }
+      })
+    } else if (action === 'overtime') {
+      setAttendance(prev => {
+        const rec = prev[key]
+        if (!rec) return prev
+        const mult = settings.weekendMultiplier
+        return { ...prev, [key]: { ...rec, isOvertime: true, isWeekend: false, isHoliday: false, isLeave: false, leaveType: undefined, amount: rec.rate * mult, multiplier: mult, holidayName: undefined } }
+      })
+    } else if (action === 'holiday') {
+      setAttendance(prev => {
+        const rec = prev[key]
+        if (!rec) return prev
+        const mult = settings.holidayMultiplier
+        return { ...prev, [key]: { ...rec, isHoliday: true, isWeekend: false, isOvertime: false, isLeave: false, leaveType: undefined, amount: rec.rate * mult, multiplier: mult } }
+      })
+    } else if (action.startsWith('leave-')) {
+      const leaveType = action.slice(6)
+      const lt = ltById(leaveType)
+      setAttendance(prev => {
+        const rec = prev[key]
+        if (!rec) return prev
+        const amount = leavePayFor(lt, rec.rate)
+        return { ...prev, [key]: { ...rec, isOvertime: false, isWeekend: false, isHoliday: false, holidayName: undefined, isLeave: true, leaveType, amount, multiplier: rec.rate > 0 ? Math.round((amount / rec.rate) * 100) / 100 : 0 } }
+      })
+    }
+    setEditingKey(null)
+    setEditingDate(null)
+  }
+
+  function goPrevMonth(){
+    const newDate = new Date(year, month-1,1)
+    if (startMonthKey && newDate.getFullYear()*12 + newDate.getMonth() < parseMonthKey(startMonthKey).year*12 + parseMonthKey(startMonthKey).month) return
+    setCurrentDate(newDate)
+  }
+  function goNextMonth(){ setCurrentDate(new Date(year, month+1,1)) }
+  function goPrevYear(){
+    const newYear = year - 1
+    if (startMonthKey && newYear < parseMonthKey(startMonthKey).year) return
+    setCurrentDate(new Date(newYear, month,1))
+  }
+  function goNextYear(){ setCurrentDate(new Date(year+1, month,1)) }
+  function openMonth(mIdx){
+    if (startMonthKey) {
+      const { year: sY, month: sM } = parseMonthKey(startMonthKey)
+      if (year === sY && mIdx < sM) return
+      if (year < sY) return
+    }
+    setCurrentDate(new Date(year, mIdx,1)); setView('month')
+  }
+  function goToCurrentMonth(){ setCurrentDate(new Date(realYear, realMonth, 1)); setView('month') }
+
+  function updateLtDraft(i, patch) { setLtDraft(d => (d || []).map((t, idx) => idx === i ? { ...t, ...patch } : t)) }
+  function removeLtDraft(i) { setLtDraft(d => (d || []).filter((_, idx) => idx !== i)) }
+  function addLtDraft() { setLtDraft(d => [...(d || []), { id: `lt_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name: '', payMode: 'percent', payValue: 100 }]) }
+
+  function handleSaveRate(){
+    const cleaned = rateInput.replace(/[^0-9]/g,'')
+    const num = parseInt(cleaned,10)
+    if(!num || num<=0) return
+    const goalCleaned = goalInput.replace(/[^0-9]/g,'')
+    const goalNum = parseInt(goalCleaned,10) || 0
+    const paydayCleaned = paydayInput.replace(/[^0-9]/g,'')
+    let paydayNum = parseInt(paydayCleaned,10)
+    if (isNaN(paydayNum)) paydayNum = 0
+    paydayNum = Math.max(0, Math.min(31, paydayNum))
+    const cleanedTypes = (ltDraft || [])
+      .map(t => ({ id: t.id, name: (t.name || '').trim().slice(0, 40), payMode: t.payMode === 'flat' ? 'flat' : 'percent', payValue: Math.max(0, Number(t.payValue) || 0) }))
+      .filter(t => t.name)
+    setSettings(s=>({...s, dailyRate:num, salaryGoal: goalNum, paydayDay: paydayNum, ...(ltDraft ? { leaveTypes: cleanedTypes } : {})}))
+    setRateInput(String(num))
+    setGoalInput(String(goalNum))
+    setPaydayInput(String(paydayNum))
+    setShowSettings(false)
+  }
+
+  async function handleSaveProfileName(){
+    if (!supabase || !user) return
+    if (!profileName.trim()) return
+    setProfileSaving(true)
+    try {
+      const { data, error } = await supabase.auth.updateUser({ data: { full_name: profileName.trim() } })
+      if (error) throw error
+      if (data.user) setUser(data.user)
+    } catch (e) { setCloudError(e.message) } finally { setProfileSaving(false) }
+  }
+
+  async function handleAuthSubmit(e){
+    e.preventDefault()
+    if(!supabase) return
+    setAuthBusy(true); setAuthError('')
+    try{
+      if(authMode==='signup'){
+        const { data, error } = await supabase.auth.signUp({
+          email: authForm.email, password: authForm.password,
+          options: { data: { full_name: authForm.name.trim() || authForm.email.split('@')[0] } }
+        })
+        if(error) throw error
+        if(data.user) {
+          setUser(data.user)
+          setProfileName(data.user.user_metadata?.full_name || authForm.name)
+          setShowAuth(false)
+          setAuthForm({email:'',password:'', name:''})
+          if (!startMonthKey) setStartMonthKey(monthKey(new Date().getFullYear(), new Date().getMonth()))
+        }
+      } else {
+        const { data, error } = await supabase.auth.signInWithPassword({ email: authForm.email, password: authForm.password })
+        if(error) throw error
+        setUser(data.user)
+        setProfileName(data.user.user_metadata?.full_name || '')
+        setShowAuth(false)
+        setAuthForm({email:'',password:'', name:''})
+      }
+    } catch(err){ setAuthError(err.message || 'Authentication failed') } finally{ setAuthBusy(false) }
+  }
+
+  async function handleLogout(){
+    if(!supabase) return
+    await supabase.auth.signOut()
+    setUser(null)
+    setSyncStatus('idle')
+    hasPushedInitialLocalRef.current = false
+  }
+
+  async function handleForgotPassword(e){
+    e.preventDefault()
+    if(!supabase) return
+    setForgotBusy(true); setAuthError('')
+    try{
+      const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, { redirectTo: window.location.origin })
+      if(error) throw error
+      setForgotSent(true)
+    } catch(err){ setAuthError(err.message || 'Failed to send reset email') } finally{ setForgotBusy(false) }
+  }
+
+  async function handleRecoverySubmit(e){
+    e.preventDefault()
+    if(!supabase) return
+    setRecoveryBusy(true); setRecoveryError('')
+    try{
+      const { error } = await supabase.auth.updateUser({ password: newPassword })
+      if(error) throw error
+      setShowRecovery(false); setNewPassword('')
+    } catch(err){ setRecoveryError(err.message || 'Failed to update password') } finally{ setRecoveryBusy(false) }
+  }
+
+  function payslipFilename() {
+    return `DayPay_Payslip_${getMonthName(month)}_${year}_${displayName || 'Employee'}.pdf`
+  }
+
+  function generatePayslipDoc() {
+    const doc = new jsPDF()
+    const pageW = doc.internal.pageSize.getWidth()
+    
+    // DayPay branding
+    doc.setFillColor(11,27,50) // Navy #0B1B32
+    doc.rect(0,0,pageW,28,'F')
+    doc.setFont('helvetica','bold')
+    doc.setFontSize(18)
+    doc.setTextColor(255,255,255)
+    doc.text('DayPay', 14, 18)
+    doc.setFontSize(10)
+    doc.setTextColor(21,128,61) // Green
+    doc.text('Know what your work is worth.', 50, 18)
+    doc.setFontSize(9)
+    doc.setTextColor(255,255,255)
+    doc.text(`${getMonthName(month)} ${year} Payslip`, pageW-14, 18, { align: 'right' })
+
+    // Employee info
+    doc.setTextColor(11,27,50)
+    doc.setFontSize(14)
+    doc.setFont('helvetica','bold')
+    doc.text(displayName || 'Employee', 14, 40)
+    doc.setFontSize(10)
+    doc.setFont('helvetica','normal')
+    doc.setTextColor(100,100,100)
+    doc.text(user?.email || 'Local user', 14, 46)
+    doc.text(`Daily Rate: ${formatNaira(settings.dailyRate)} | Weekend/OT/Holiday: ${settings.weekendMultiplier}×`, 14, 52)
+    doc.text(`Period: ${getMonthName(month)} ${year} | Status: ${monthStatus.toUpperCase()} ${monthStatus==='locked' ? '(FINAL)' : '(IN PROGRESS)'}`, 14, 58)
+
+    // Summary
+    doc.setFont('helvetica','bold')
+    doc.setTextColor(11,27,50)
+    doc.setFontSize(12)
+    doc.text('Salary Summary', 14, 70)
+    doc.setFontSize(22)
+    doc.setTextColor(21,128,61)
+    doc.text(formatNaira(monthlyStats.total), 14, 80)
+    doc.setFontSize(10)
+    doc.setTextColor(100,100,100)
+    doc.setFont('helvetica','normal')
+    doc.text(`${monthlyStats.days} days worked · ${monthlyStats.regularDays} regular · ${monthlyStats.weekendDays} weekend · ${monthlyStats.overtimeDays} OT · ${monthlyStats.holidayDays} holiday · ${monthlyStats.leaveDays} leave`, 14, 86)
+
+    // Breakdown
+    let y = 96
+    doc.setFont('helvetica','bold')
+    doc.setTextColor(11,27,50)
+    doc.setFontSize(11)
+    doc.text('Breakdown', 14, y)
+    y+=6
+    doc.setFont('helvetica','normal')
+    doc.setFontSize(10)
+    const rows = [
+      ['Regular', `${monthlyStats.regularDays} days`, `${monthlyStats.regularDays} × ${formatNaira(settings.dailyRate)}`, formatNaira(monthlyStats.regularDays * settings.dailyRate)],
+      ['Weekend 2×', `${monthlyStats.weekendDays} days`, `${monthlyStats.weekendDays} × ${formatNaira(settings.dailyRate*settings.weekendMultiplier)}`, formatNaira(monthlyStats.weekendDays * settings.dailyRate*settings.weekendMultiplier)],
+      ['Overtime OT 2×', `${monthlyStats.overtimeDays} days`, `${monthlyStats.overtimeDays} × ${formatNaira(settings.dailyRate*settings.weekendMultiplier)}`, formatNaira(monthlyStats.overtimeDays * settings.dailyRate*settings.weekendMultiplier)],
+      ['Holiday 2×', `${monthlyStats.holidayDays} days`, `${monthlyStats.holidayDays} × ${formatNaira(settings.dailyRate*settings.holidayMultiplier)}`, formatNaira(monthlyStats.holidayDays * settings.dailyRate*settings.holidayMultiplier)],
+      ['Leave', `${monthlyStats.leaveDays} days`, 'per your leave settings', formatNaira(monthlyStats.leavePay)],
+    ]
+    rows.forEach(r => {
+      doc.text(r[0], 14, y)
+      doc.text(r[1], 50, y)
+      doc.text(r[2], 80, y)
+      doc.text(r[3], 150, y)
+      y+=6
+    })
+    y+=4
+    doc.setFont('helvetica','bold')
+    doc.text(`Final Salary for ${getMonthName(month)} ${year}: ${formatNaira(monthlyStats.total)}`, 14, y)
+    y+=10
+
+    // Attendance list
+    doc.setFontSize(11)
+    doc.text('Attendance Details', 14, y)
+    y+=6
+    doc.setFontSize(9)
+    doc.setFont('helvetica','normal')
+    doc.setTextColor(80,80,80)
+    // Table header
+    doc.text('Date', 14, y)
+    doc.text('Day', 35, y)
+    doc.text('Type', 65, y)
+    doc.text('Rate', 95, y)
+    doc.text('Amount', 130, y)
+    y+=4
+    doc.setDrawColor(200,200,200)
+    doc.line(14, y, pageW-14, y)
+    y+=6
+
+    const prefix = `${year}-${String(month + 1).padStart(2, '0')}-`
+    const entries = Object.keys(attendance).filter(k=>k.startsWith(prefix)).sort().map(k=>attendance[k])
+    entries.forEach(rec => {
+      if (y > 280) { doc.addPage(); y = 20 }
+      const d = new Date(rec.date)
+      const dayName = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()]
+      const type = rec.isLeave ? leaveLabel(rec.leaveType) : rec.isWeekend ? 'Weekend 2×' : rec.isOvertime ? 'Overtime OT' : rec.isHoliday ? `Holiday ${rec.holidayName ? `(${rec.holidayName})` : ''}` : 'Regular'
+      doc.text(rec.date, 14, y)
+      doc.text(dayName, 35, y)
+      doc.text(type, 65, y)
+      doc.text(formatNaira(rec.rate), 95, y)
+      doc.setTextColor(21,128,61)
+      doc.setFont('helvetica','bold')
+      doc.text(formatNaira(rec.amount), 130, y)
+      doc.setFont('helvetica','normal')
+      doc.setTextColor(80,80,80)
+      y+=6
+    })
+
+    // Footer
+    doc.setFontSize(8)
+    doc.setTextColor(150,150,150)
+    doc.text(`DayPay — Know what your work is worth. Generated ${new Date().toLocaleString()} · ${displayName || 'Employee'} · ${startMonthKey ? `Started ${startMonthKey}` : ''}`, 14, 290)
+    doc.text(`© 2026 Akaninyene. All rights reserved.`, 14, 294)
+
+    return doc
+  }
+
+  function exportPayslip() {
+    const doc = generatePayslipDoc()
+    doc.save(payslipFilename())
+  }
+
+  function buildPayslipText() {
+    const lines = [
+      `📊 DayPay Payslip — ${getMonthName(month)} ${year}`,
+      ``,
+      `Total: ${formatNaira(monthlyStats.total)}`,
+      `${monthlyStats.days} days worked · ${monthlyStats.regularDays} regular · ${monthlyStats.weekendDays} weekend · ${monthlyStats.overtimeDays} OT · ${monthlyStats.holidayDays} holiday · ${monthlyStats.leaveDays} leave`,
+    ]
+    if (monthlyStats.regularDays > 0) lines.push(`Regular: ${monthlyStats.regularDays} × ${formatNaira(settings.dailyRate)} = ${formatNaira(monthlyStats.regularDays * settings.dailyRate)}`)
+    if (monthlyStats.weekendDays > 0) lines.push(`Weekend 2×: ${monthlyStats.weekendDays} × ${formatNaira(settings.dailyRate * settings.weekendMultiplier)} = ${formatNaira(monthlyStats.weekendDays * settings.dailyRate * settings.weekendMultiplier)}`)
+    if (monthlyStats.overtimeDays > 0) lines.push(`Overtime: ${monthlyStats.overtimeDays} × ${formatNaira(settings.dailyRate * settings.weekendMultiplier)} = ${formatNaira(monthlyStats.overtimeDays * settings.dailyRate * settings.weekendMultiplier)}`)
+    if (monthlyStats.holidayDays > 0) lines.push(`Holiday 2×: ${monthlyStats.holidayDays} × ${formatNaira(settings.dailyRate * settings.holidayMultiplier)} = ${formatNaira(monthlyStats.holidayDays * settings.dailyRate * settings.holidayMultiplier)}`)
+    if (monthlyStats.leaveDays > 0) lines.push(`Leave: ${monthlyStats.leaveDays} day${monthlyStats.leaveDays > 1 ? 's' : ''} · ${formatNaira(monthlyStats.leavePay)}`)
+    lines.push(``, `— DayPay · Know what your work is worth.`)
+    return lines.join('\n')
+  }
+
+  async function shareToWhatsApp() {
+    setShowShareMenu(false)
+    // Best path: share the actual PDF file via the native share sheet (user picks WhatsApp).
+    // Must stay in the same user-gesture task — jsPDF generation is synchronous, so it is.
+    try {
+      const doc = generatePayslipDoc()
+      const file = new File([doc.output('blob')], payslipFilename(), { type: 'application/pdf' })
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          text: `DayPay Payslip — ${getMonthName(month)} ${year}: ${formatNaira(monthlyStats.total)} · ${monthlyStats.days} days worked`,
+          title: 'DayPay Payslip',
+        })
+        return
+      }
+    } catch (err) {
+      if (err && err.name === 'AbortError') return // user closed the share sheet — not an error
+      // any other failure → fall through to the text fallback
+    }
+    // Fallback: WhatsApp text summary via wa.me — works on any phone/browser, no file support needed
+    window.open(`https://wa.me/?text=${encodeURIComponent(buildPayslipText())}`, '_blank', 'noopener')
+  }
+
+  const displayName = user?.user_metadata?.full_name || profileName || user?.email?.split('@')[0] || ''
+
+  const statusConfig = {
+    active: { label: 'Active', desc: 'Editable', icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="var(--daypay-green)"><circle cx="12" cy="12" r="8"/></svg>, color: '#16A34A' },
+    locked: { label: 'Locked', desc: 'Read only — Final', icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>, color: '#a1a1aa' },
+    future: { label: 'Upcoming', desc: 'Not yet active', icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>, color: '#94a3b8' },
+    before_start: { label: 'Before start', desc: 'Tracking started later', icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>, color: '#cbd5e1' },
+  }
+
+  const editingRecord = editingKey ? attendance[editingKey] : null
+
+  // Salary goal progress
+  const goalProgress = settings.salaryGoal > 0 ? Math.min(100, Math.round((monthlyStats.total / settings.salaryGoal) * 100)) : 0
+  const goalProgressYear = settings.salaryGoal > 0 ? Math.min(100, Math.round((yearlyStats.total / (settings.salaryGoal * 12)) * 100)) : 0
+  const otExtra = monthlyStats.overtimeDays * settings.dailyRate
+  const weekendExtra = monthlyStats.weekendDays * settings.dailyRate
+  const holidayExtra = monthlyStats.holidayDays * settings.dailyRate
+  const totalExtra = otExtra + weekendExtra + holidayExtra
+
+  // Payday countdown + month-end projection (active month only).
+  // Projection assumes all remaining Mon–Fri (excl. public holidays and
+  // already-logged days) are worked at the current daily rate.
+  const paydayInfo = useMemo(() => {
+    const dim = new Date(year, month + 1, 0).getDate()
+    const pDay = settings.paydayDay > 0 ? Math.min(settings.paydayDay, dim) : dim
+    const paydayDate = new Date(year, month, pDay)
+    const todayMid = new Date(realCurrentDate.getFullYear(), realCurrentDate.getMonth(), realCurrentDate.getDate())
+    const viewStart = new Date(year, month, 1)
+    const from = todayMid > viewStart ? todayMid : viewStart
+    const end = new Date(year, month, dim)
+    let remainingWeekdays = 0
+    for (let d = new Date(from); d <= end; d.setDate(d.getDate() + 1)) {
+      const dow = d.getDay()
+      if (dow === 0 || dow === 6) continue
+      if (isHolidayDay(d)) continue
+      if (attendance[formatDateKey(d)]) continue
+      remainingWeekdays += 1
+    }
+    const daysToPayday = Math.round((paydayDate - todayMid) / 86400000)
+    const projectedTotal = monthlyStats.total + remainingWeekdays * settings.dailyRate
+    return { paydayDay: pDay, paydayDate, daysToPayday, remainingWeekdays, projectedTotal }
+  }, [year, month, realCurrentDate, settings.paydayDay, settings.dailyRate, monthlyStats.total, attendance, holidaysMap])
+
+  return (
+    <div className="app-root">
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Geist+Mono:wght@400;500;600&display=swap');`}</style>
+
+      {showSplash && (
+        <div className="daypay-splash">
+          <div className="splash-content">
+            <div className="splash-logo">
+              <img src="/daypay-logo.svg" alt="DayPay" className="splash-logo-img" />
+            </div>
+            <div className="splash-tagline">Know what your work is worth.</div>
+            <div className="splash-loader">
+              <div className="loader-dot"></div>
+              <div className="loader-dot"></div>
+              <div className="loader-dot"></div>
+            </div>
+            <div className="splash-footer">
+              <span className="splash-navy">Day</span><span className="splash-green">Pay</span>
+              <span className="splash-dot">·</span>
+              <span className="splash-year">{realCurrentDate.getFullYear()}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!showSettings && (
+      <div className="phone-frame">
+        <header className="header">
+          <div className="header-left">
+            <img 
+              src={theme==='dark' ? "/daypay-logo-dark.svg" : "/daypay-logo.svg"} 
+              alt="DayPay" 
+              style={{height: '34px', width: 'auto', display: 'block'}} 
+              title="DayPay - Know what your work is worth." 
+            />
+            {isSupabaseConfigured && syncStatus!=='idle' && (
+              <span className={`sync-badge ${syncStatus}`}>{syncStatus==='syncing'?'syncing…':syncStatus==='synced'?'synced ✓':'error'}</span>
+            )}
+          </div>
+          <div className="header-right" style={{display:'flex', gap:8, alignItems:'center'}} ref={hamburgerMenuRef}>
+            <button className="icon-btn hamburger-btn" onClick={()=>setShowHamburgerMenu(!showHamburgerMenu)} aria-label="Menu" title="Menu">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
+            {showHamburgerMenu && (
+              <div className="hamburger-dropdown">
+                {user && displayName && (
+                  <div className="hamburger-user">
+                    <div className="welcome-avatar" style={{width:32, height:32, fontSize:13}}>{displayName.charAt(0).toUpperCase()}</div>
+                    <div>
+                      <div style={{fontWeight:700, fontSize:13}}>{displayName}</div>
+                      <div style={{fontSize:10, color:'var(--text-3)', fontFamily:'Geist Mono, monospace'}}>{user.email}</div>
+                    </div>
+                  </div>
+                )}
+                <button className="hamburger-item" onClick={()=>{setTheme(theme==='light'?'dark':'light'); setShowHamburgerMenu(false)}}>
+                  <span className="hamburger-icon">
+                    {theme==='light' ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3a6 6 0 0 0 9 9c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9Z"/></svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>
+                    )}
+                  </span>
+                  <span>{theme==='light' ? 'Dark mode' : 'Light mode'}</span>
+                </button>
+                {isSupabaseConfigured && (
+                  user ? (
+                    <button className="hamburger-item" onClick={()=>{handleLogout(); setShowHamburgerMenu(false)}}>
+                      <span className="hamburger-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span>
+                      <span>Sign out</span>
+                    </button>
+                  ) : (
+                    <button className="hamburger-item" onClick={()=>{setShowAuth(true); setAuthMode('signin'); setShowHamburgerMenu(false)}}>
+                      <span className="hamburger-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M15 3h4a5 5 0 0 1 5 5v8a5 5 0 0 1-5 5h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg></span>
+                      <span>Sign in to DayPay</span>
+                    </button>
+                  )
+                )}
+                <button className="hamburger-item" onClick={()=>{setShowSettings(true); setShowHamburgerMenu(false)}}>
+                  <span className="hamburger-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 6h2.8M11.2 6H20"/><circle cx="9" cy="6" r="2.1"/><path d="M4 12h8.6M17 12h3"/><circle cx="14.8" cy="12" r="2.1"/><path d="M4 18h3.8M12.2 18H20"/><circle cx="10" cy="18" r="2.1"/></svg></span>
+                  <span>Settings</span>
+                </button>
+                {isSupabaseConfigured && syncStatus!=='idle' && (
+                  <div className="hamburger-sync">
+                    <span className={`sync-badge ${syncStatus}`} style={{marginLeft:0}}>{syncStatus==='syncing'?'syncing…':syncStatus==='synced'?'synced ✓':'error'}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </header>
+
+        {!isSupabaseConfigured && (
+          <div className="config-banner">
+            <span>Cloud sync not configured.</span>
+            <a href="#" onClick={(e)=>{e.preventDefault(); setShowSettings(true)}}>Setup →</a>
+          </div>
+        )}
+
+        {cloudError && (
+          <div className="error-banner">
+            <span>{cloudError}</span>
+            <button onClick={()=>setCloudError('')}>×</button>
+          </div>
+        )}
+
+        {user && displayName && (
+          <div className="welcome-banner">
+            <div className="welcome-avatar">{displayName.charAt(0).toUpperCase()}</div>
+            <div className="welcome-text">
+              <span className="welcome-name">Hi, {displayName}</span>
+              <span className="welcome-sub">{user.email} · {startMonthKey ? `Started ${startMonthKey}` : ''}</span>
+            </div>
+          </div>
+        )}
+
+        <div className="seg-wrap">
+          <div className="segmented">
+            <button className={view==='month'?'active':''} onClick={()=>setView('month')}>Month</button>
+            <button className={view==='year'?'active':''} onClick={()=>setView('year')}>Year</button>
+          </div>
+        </div>
+
+        {view==='month' ? (
+          <>
+            <div className="month-nav">
+              <button className="nav-btn" onClick={goPrevMonth} disabled={(() => {
+                if (!startMonthKey) return false
+                const { year: sY, month: sM } = parseMonthKey(startMonthKey)
+                return (year*12 + month) -1 < sY*12 + sM
+              })()} style={{opacity: (() => {
+                if (!startMonthKey) return 1
+                const { year: sY, month: sM } = parseMonthKey(startMonthKey)
+                return (year*12 + month) -1 < sY*12 + sM ? 0.3 : 1
+              })()}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m15 18-6-6 6-6"/></svg></button>
+              <div className="month-title">
+                <span className="month-name">{getMonthName(month)}</span>
+                <span className="year-name" style={{display:'flex', gap:6, alignItems:'center'}}>
+                  {year}
+                  <span className={`status-dot ${monthStatus}`} title={statusConfig[monthStatus]?.label} />
+                  {startMonthKey && monthKey(year, month)===startMonthKey && <span style={{fontSize:'9px', background:'var(--daypay-navy)', border:'1px solid var(--daypay-navy)', padding:'1px 5px', borderRadius:4, marginLeft:4, color:'#ffffff'}}>START</span>}
+                </span>
+              </div>
+              <button className="nav-btn" onClick={goNextMonth}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m9 18 6-6-6-6"/></svg></button>
+            </div>
+
+            <div className={`month-status-banner ${monthStatus}`}>
+              <div className="msb-left">
+                <span className="msb-icon">{statusConfig[monthStatus]?.icon}</span>
+                <span className="msb-label">{statusConfig[monthStatus]?.label}</span>
+                <span className="msb-desc">· {statusConfig[monthStatus]?.desc}</span>
+              </div>
+              {monthStatus!=='active' && (
+                <button className="msb-action" onClick={goToCurrentMonth}>Go to current</button>
+              )}
+            </div>
+
+            {monthStatus==='locked' && monthlyStats.days>0 && (
+              <div className="final-salary-banner">
+                <div className="fsb-label">Final salary for {getMonthName(month)} {year}</div>
+                <div className="fsb-amount">{formatNaira(monthlyStats.total)}</div>
+                <div className="fsb-details">{monthlyStats.days} days · {monthlyStats.regularDays} regular · {monthlyStats.weekendDays} weekend · {monthlyStats.overtimeDays} OT · {monthlyStats.holidayDays} holiday · {monthlyStats.leaveDays} leave · Locked</div>
+              </div>
+            )}
+
+            {monthStatus==='future' && (
+              <div className="info-banner">This month hasn't started yet. Opens on {getMonthName(month)} {year}. You can view it but not edit.</div>
+            )}
+
+            {monthStatus==='before_start' && (
+              <div className="info-banner">Tracking started in {startMonthKey ? (()=>{const {year, month}=parseMonthKey(startMonthKey); return `${getMonthName(month)} ${year}`})() : 'current month'}. No records before that.</div>
+            )}
+
+            {isEditable || monthStatus==='locked' ? (
+            <>
+            <div className="weekdays">
+              {['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((w,idx)=><div key={w} className={idx>=5?'weekend-label':''}>{w}</div>)}
+            </div>
+
+            <div className={`calendar-grid ${!isEditable ? 'locked-grid' : ''}`}>
+              {calendarCells.map((dateObj,i)=>{
+                if(!dateObj) return <div key={'empty-'+i} className="cell empty" />
+                const key=formatDateKey(dateObj)
+                const record=attendance[key]
+                const isToday=key===todayKey
+                const isWeekend=isWeekendDay(dateObj)
+                const holiday = isHolidayDay(dateObj)
+                const worked=!!record
+                const isOvertime = record?.isOvertime
+                const isHol = record?.isHoliday || holiday
+                return (
+                  <button key={key} className={`cell ${worked?'worked':''} ${isWeekend?'is-weekend':''} ${isToday?'is-today':''} ${!isEditable?'locked-cell':''} ${isOvertime?'is-overtime':''} ${isHol?'is-holiday':''} ${record?.isLeave?'is-leave':''} ${record?.isLeave && record.amount===0?'is-leave-unpaid':''}`} onClick={()=>handleCellClick(dateObj)} disabled={!isEditable && !worked} title={record?.isLeave ? `${leaveLabel(record.leaveType)} — ${record.amount>0 ? 'Paid leave' : 'Unpaid leave'}` : holiday ? `${holiday.name} — ${isWeekend ? 'Weekend' : 'Holiday'} 2×` : isWeekend ? 'Weekend 2×' : 'Weekday'}>
+                    <span className="date-num">{dateObj.getDate()}</span>
+                    {holiday && !worked && <span className="holiday-dot" title={holiday.name}></span>}
+                    {worked && (
+                      <span className={`stamp ${record.isLeave ? `stamp-leave${record.amount===0?' unpaid':''}` : record.isWeekend ? 'stamp-2x' : record.isOvertime ? 'stamp-ot' : record.isHoliday ? 'stamp-hol' : 'stamp-ok'}`}>
+                        {record.isLeave ? leaveLabel(record.leaveType) : record.isWeekend ? '2×' : record.isOvertime ? 'OT' : record.isHoliday ? 'HOL' : 'OK'}
+                      </span>
+                    )}
+                    {isToday && !worked && <span className="today-dot" />}
+                    {!isEditable && worked && <span className="locked-overlay"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>}
+                    {worked && !isWeekend && !record.isHoliday && isEditable && (
+                      <span className="edit-corner" onClick={(e)=>handleEditButtonClick(e, dateObj)} title="Edit to overtime">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+
+            {isEditable && futureDays.length > 0 && (
+              !showFutureDays ? (
+                <button className="future-log-btn" onClick={()=>setShowFutureDays(true)}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><rect x="3" y="4" width="18" height="17" rx="2.5"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M12 14v4M10 16h4"/></svg>
+                  Log a future day
+                  <span className="future-log-count">{futureDays.length} left this month</span>
+                </button>
+              ) : (
+                <div className="future-chips-block">
+                  <div className="future-chips-label">Tap a day to log it ahead</div>
+                  <div className="future-chips">
+                    {futureDays.map(d => {
+                      const dt = new Date(year, month, d)
+                      const wd = ['S','M','T','W','T','F','S'][dt.getDay()]
+                      const wknd = isWeekendDay(dt)
+                      return (
+                        <button key={d} className={`future-chip ${wknd?'weekend':''}`} onClick={()=>handleCellClick(dt)} title={wknd ? 'Weekend 2×' : 'Weekday'}>
+                          <span className="fc-wd">{wd}</span>
+                          <span className="fc-num">{d}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            )}
+            </>
+            ) : (
+              <div className="upcoming-note">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="4" width="18" height="17" rx="2.5"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <span>{monthStatus==='future' ? 'Calendar opens when the month starts.' : 'No records this month.'}</span>
+              </div>
+            )}
+
+            <div className="summary-card">
+              <div className="summary-top">
+                <div className="summary-amount">
+                  {formatNaira(monthlyStats.total)}
+                  {monthStatus==='locked' && <span className="final-badge">FINAL</span>}
+                  {monthStatus==='active' && <span className="active-badge">IN PROGRESS</span>}
+                </div>
+                <div className="summary-sub">
+                  {displayName ? `${displayName} · ` : ''}{monthlyStats.days} day{monthlyStats.days!==1?'s':''} worked{monthlyStats.leaveDays>0 ? `, ${monthlyStats.leaveDays} on leave` : ''} {monthStatus==='locked' ? '· Locked' : monthStatus==='active' ? '· Editable' : ''} {isSupabaseConfigured && user && <span className="cloud-hint">· cloud synced</span>}
+                </div>
+
+                {/* Payday countdown + projection (active month only) */}
+                {monthStatus==='active' && (
+                  <div className="payday-panel">
+                    <div className="payday-top">
+                      <div className="payday-block">
+                        <span className="payday-num mono payday-projected">{formatNaira(paydayInfo.projectedTotal)}</span>
+                        <span className="payday-cap">Projected month-end</span>
+                      </div>
+                      <div className="payday-block payday-count">
+                        <span className="payday-num mono">{paydayInfo.daysToPayday > 0 ? paydayInfo.daysToPayday : paydayInfo.daysToPayday === 0 ? 'Today' : '\u2013'}</span>
+                        <span className="payday-cap">{paydayInfo.daysToPayday > 1 ? 'days to payday' : paydayInfo.daysToPayday === 1 ? 'day to payday' : paydayInfo.daysToPayday === 0 ? 'is payday \uD83C\uDF89' : 'payday passed'}</span>
+                      </div>
+                    </div>
+                    <div className="payday-hint">
+                      Payday {getMonthName(month, true)} {paydayInfo.paydayDay} · {paydayInfo.remainingWeekdays} weekday{paydayInfo.remainingWeekdays!==1?'s':''} left · at {formatNaira(settings.dailyRate)}/day
+                    </div>
+                  </div>
+                )}
+
+                {/* Salary Goal Progress */}
+                {settings.salaryGoal > 0 && (
+                  <div className="goal-progress">
+                    <div className="goal-header">
+                      <span>Monthly Goal: {formatNaira(settings.salaryGoal)}</span>
+                      <span className="mono" style={{fontWeight:700, color: goalProgress>=100 ? 'var(--daypay-green)' : 'var(--daypay-navy)'}}>{goalProgress}%</span>
+                    </div>
+                    <div className="progress-bar">
+                      <div className="progress-fill" style={{width: `${Math.min(100, goalProgress)}%`, background: goalProgress>=100 ? 'var(--daypay-green)' : 'var(--daypay-navy)'}}></div>
+                    </div>
+                    <div className="goal-hint">
+                      {monthlyStats.total >= settings.salaryGoal ? `🎉 Goal reached! +${formatNaira(monthlyStats.total - settings.salaryGoal)} over` : `Need ${formatNaira(settings.salaryGoal - monthlyStats.total)} more to reach goal`}
+                    </div>
+                  </div>
+                )}
+
+                {/* OT Insights */}
+                {totalExtra > 0 && (
+                  <div className="ot-insights">
+                    <div className="ot-insight-title"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{marginRight:6}}><path d="M9 21h6"/><path d="M12 17a5 5 0 0 0 5-5c0-2-1-3-2-4l-1-1h-4l-1 1c-1 1-2 2-2 4a5 5 0 0 0 5 5z"/><path d="M12 7V5"/></svg> Extra Value — Peeking Slip</div>
+                    <div className="ot-insight-text">
+                      {monthlyStats.overtimeDays>0 && <span>{monthlyStats.overtimeDays} OT days = {formatNaira(otExtra)} extra · </span>}
+                      {monthlyStats.weekendDays>0 && <span>{monthlyStats.weekendDays} weekend days = {formatNaira(weekendExtra)} extra · </span>}
+                      {monthlyStats.holidayDays>0 && <span>{monthlyStats.holidayDays} holidays = {formatNaira(holidayExtra)} extra</span>}
+                      <br />
+                      <strong>Total extra from 2×: {formatNaira(totalExtra)}</strong> — that's the green slip peeking!
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="summary-divider" />
+              <div className="summary-rows">
+                <div className="summary-row"><span>Regular <span className="mini-stamp ok">OK</span></span><span className="mono">{monthlyStats.regularDays} × {formatNaira(settings.dailyRate)}</span></div>
+                <div className="summary-row"><span>Weekend <span className="mini-stamp x2">2×</span></span><span className="mono">{monthlyStats.weekendDays} × {formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span></div>
+                <div className="summary-row"><span>Overtime <span className="mini-stamp ot">OT 2×</span></span><span className="mono">{monthlyStats.overtimeDays} × {formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span></div>
+                <div className="summary-row"><span>Holiday <span className="mini-stamp hol">HOL 2×</span></span><span className="mono">{monthlyStats.holidayDays} × {formatNaira(settings.dailyRate*settings.holidayMultiplier)}</span></div>
+                <div className="summary-row"><span>Leave <span className="mini-stamp lv">LV</span></span><span className="mono">{monthlyStats.leaveDays}d · {formatNaira(monthlyStats.leavePay)}</span></div>
+                <div className="summary-row" style={{marginTop:4, paddingTop:10, borderTop:'1px dashed var(--border)'}}><span><strong>Monthly {monthStatus==='locked'?'Final Salary':'Total'}</strong></span><span className="mono" style={{fontWeight:800, color:'var(--daypay-green)', fontSize:'14px'}}>{formatNaira(monthlyStats.total)}</span></div>
+              </div>
+
+              <div style={{position:'relative', marginTop:14}} ref={shareMenuRef}>
+                <button className="btn-secondary" style={{width:'100%', height:40, display:'flex', alignItems:'center', justifyContent:'center', gap:8}} onClick={()=>setShowShareMenu(v=>!v)} disabled={(monthlyStats.days + monthlyStats.leaveDays)===0}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+                  Share Payslip
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" style={{marginLeft:2, opacity:.6}}><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                {showShareMenu && (
+                  <div className="share-dropdown">
+                    <button className="share-option" onClick={shareToWhatsApp}>
+                      <span className="share-option-icon wa">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.52.149-.174.198-.298.297-.497.1-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
+                      </span>
+                      <span className="share-option-text">
+                        <strong>Share to WhatsApp</strong>
+                        <em>PDF via share sheet · text summary fallback</em>
+                      </span>
+                    </button>
+                    <button className="share-option" onClick={()=>{ setShowShareMenu(false); exportPayslip() }}>
+                      <span className="share-option-icon pdf">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                      </span>
+                      <span className="share-option-text">
+                        <strong>Export as PDF</strong>
+                        <em>Download the payslip file</em>
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {isEditable && (
+                <div className="empty-hint">
+                  Tap weekday to log OK, edit icon to OT. Weekends auto 2×. Holidays auto HOL 2×. Current month editable.
+                </div>
+              )}
+              {!isEditable && <div className="empty-hint locked-hint" style={{display:'flex', alignItems:'center', justifyContent:'center', gap:6}}>
+                {monthStatus==='locked' ? (
+                  <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Locked read-only. Final salary includes OT + holidays.</>
+                ) : monthStatus==='future' ? (
+                  <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Future — not yet active.</>
+                ) : 'Before start.'}
+              </div>}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="month-nav">
+              <button className="nav-btn" onClick={goPrevYear} disabled={(() => {
+                if (!startMonthKey) return false
+                return (year - 1) < parseMonthKey(startMonthKey).year
+              })()} style={{opacity: (() => {
+                if (!startMonthKey) return 1
+                return (year - 1) < parseMonthKey(startMonthKey).year ? 0.3 : 1
+              })()}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m15 18-6-6 6-6"/></svg></button>
+              <div className="month-title"><span className="month-name">{year}</span><span className="year-name">Year view · {year===realYear ? 'Current year' : year < realYear ? 'Historical' : 'Future'} {startMonthKey && year===parseMonthKey(startMonthKey).year ? `· Started ${getMonthName(parseMonthKey(startMonthKey).month)}` : ''}</span></div>
+              <button className="nav-btn" onClick={goNextYear}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m9 18 6-6-6-6"/></svg></button>
+            </div>
+
+            <div className="year-totals">
+              <div className="yt-main">
+                <div className="yt-amount">{formatNaira(yearlyStats.total)}</div>
+                <div className="yt-label">
+                  {year===realYear ? `Total earned this year` : year < realYear ? `Total earned in ${year} — Final` : `Future year`}
+                  {displayName ? ` · ${displayName}` : ''} · {yearlyStats.days} days{yearlyStats.leaveDays>0 ? ` · ${yearlyStats.leaveDays} on leave` : ''} · Goal {formatNaira(settings.salaryGoal)} · {goalProgressYear}% of yearly goal
+                </div>
+                {year===realYear && (
+                  <div className="yt-sub">
+                    {yearlyStats.monthly.filter(m=>m.status==='locked').length} locked · {yearlyStats.monthly.filter(m=>m.status==='active').length} active · {yearlyStats.monthly.filter(m=>m.status==='future').length} upcoming · {yearlyStats.overtimeDays} OT · {yearlyStats.holidayDays} holidays{yearlyStats.leaveDays>0 ? ` · ${yearlyStats.leaveDays} leave` : ''}
+                  </div>
+                )}
+              </div>
+              <div className="yt-grid">
+                <div className="yt-item"><div className="yt-num mono">{yearlyStats.days}</div><div className="yt-cap">Days worked</div></div>
+                <div className="yt-item"><div className="yt-num mono">{yearlyStats.overtimeDays}</div><div className="yt-cap">OT days</div></div>
+                <div className="yt-item"><div className="yt-num mono">{yearlyStats.weekendDays + yearlyStats.holidayDays}</div><div className="yt-cap">Weekend+Hol</div></div>
+              </div>
+
+              <div className="annual-breakdown">
+                <div className="ab-title">Monthly breakdown — {year} {year===realYear ? `· Yearly Goal Progress: ${goalProgressYear}%` : ''}</div>
+                {(() => {
+                  if (!startMonthKey) return yearlyStats.monthly
+                  const { year: sY, month: sM } = parseMonthKey(startMonthKey)
+                  if (year < sY) return []
+                  if (year === sY) return yearlyStats.monthly.filter(m=>m.month >= sM)
+                  return yearlyStats.monthly
+                })().map(m=>{
+                  return (
+                    <div key={m.month} className={`ab-row ${m.status}`}>
+                      <span className="ab-month">{getMonthName(m.month, true)}</span>
+                      <span className={`ab-status ${m.status}`} style={{display:'flex', alignItems:'center', gap:4}}>
+                        {m.status==='locked' ? <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> : m.status==='active' ? <svg width="10" height="10" viewBox="0 0 24 24" fill="var(--daypay-green)"><circle cx="12" cy="12" r="8"/></svg> : m.status==='future' ? <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> : <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>}
+                        <span>{m.status==='locked'?'Locked':m.status==='active'?'Active':m.status==='future'?'Upcoming':'Before start'}</span>
+                      </span>
+                      <span className="ab-days mono">{m.days>0?`${m.days}d`:'—'}</span>
+                      <span className="ab-amount mono">{m.total>0?formatNaira(m.total):'₦0'}</span>
+                    </div>
+                  )
+                })}
+                {(() => {
+                  if (!startMonthKey) return true
+                  return year >= parseMonthKey(startMonthKey).year
+                })() && (
+                  <div className="ab-total">
+                    <span>Total {year} {startMonthKey && year===parseMonthKey(startMonthKey).year ? `(from ${getMonthName(parseMonthKey(startMonthKey).month)})` : ''}</span>
+                    <span className="mono" style={{color:'var(--daypay-green)'}}>{formatNaira(yearlyStats.total)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="months-list">
+              {(() => {
+                if (!startMonthKey) return null
+                const { year: sY, month: sM } = parseMonthKey(startMonthKey)
+                if (year < sY) return <div className="info-banner">Tracking started in {getMonthName(sM)} {sY}. No records before that.</div>
+                return null
+              })()}
+              <div className="ml-header">Tap month to view — locked read-only, weekdays editable via edit icon for OT</div>
+              {yearlyStats.monthly
+                .filter(m => {
+                  if (!startMonthKey) return true
+                  const { year: sY, month: sM } = parseMonthKey(startMonthKey)
+                  if (year < sY) return false
+                  if (year === sY && m.month < sM) return false
+                  return true
+                })
+                .map(m=>(
+                <button key={m.month} className={`month-row ${m.status}`} onClick={()=>openMonth(m.month)}>
+                  <div className="mr-left">
+                    <span className="mr-name">{getMonthName(m.month,true)}</span>
+                    <span className={`mr-status ${m.status}`} style={{display:'grid', placeItems:'center'}}>
+                      {m.status==='locked' ? <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> : m.status==='active' ? <svg width="10" height="10" viewBox="0 0 24 24" fill="var(--daypay-green)"><circle cx="12" cy="12" r="8"/></svg> : m.status==='future' ? <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> : <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>}
+                    </span>
+                    <span className="mr-days mono">{m.days>0?`${m.days}d`:'—'}</span>
+                  </div>
+                  <div className="mr-right">
+                    <span className="mr-amount mono">{m.total>0?formatNaira(m.total):'₦0'}</span>
+                    {m.status==='locked' && <span className="mr-final">FINAL</span>}
+                    {m.status==='active' && <span className="mr-active">ACTIVE</span>}
+                    <span className="mr-arrow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m9 18 6-6-6-6"/></svg></span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        <div className="footer">
+          <span className="footer-dot" /> {displayName ? `${displayName} · ` : ''}{settings.dailyRate.toLocaleString('en-NG')} / day · {settings.weekendMultiplier}× OT/Hol/Weekend {monthStatus==='locked' ? '· locked' : monthStatus==='active' ? '· active' : ''} {isSupabaseConfigured && user ? '· synced' : '· local'} · PWA ready · © 2026 Akaninyene
+        </div>
+      </div>
+      )}
+
+      {editingKey && (
+        <div className="modal-overlay" onClick={()=>{setEditingKey(null); setEditingDate(null)}}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:360}}>
+            <div className="modal-header">
+              <span>Edit {editingDate ? `${getMonthName(editingDate.getMonth())} ${editingDate.getDate()}, ${editingDate.getFullYear()}` : editingKey}</span>
+              <button className="icon-btn small" onClick={()=>{setEditingKey(null); setEditingDate(null)}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+            </div>
+            <div className="modal-body">
+              {editingRecord && (
+                <>
+                  <div className="info-box" style={{marginTop:0}}>
+                    <div className="info-row"><span>Current</span><span className="mono" style={{fontWeight:700}}>{editingRecord.isLeave ? leaveLabel(editingRecord.leaveType) : editingRecord.isOvertime ? 'OT 2×' : editingRecord.isWeekend ? 'Weekend 2×' : editingRecord.isHoliday ? 'Holiday 2×' : 'Regular OK'} · {formatNaira(editingRecord.amount)}</span></div>
+                    <div className="info-row sub"><span>Date</span><span className="mono">{editingRecord.date}</span></div>
+                  </div>
+                  <div style={{marginTop:16, display:'flex', flexDirection:'column', gap:10}}>
+                    <button className={`ot-option ${!editingRecord.isWeekend && !editingRecord.isOvertime && !editingRecord.isHoliday && !editingRecord.isLeave ? 'selected' : ''}`} onClick={()=>handleOvertimeAction('regular')}>
+                      <span className="ot-opt-left"><span className="mini-stamp ok">OK</span> Regular</span>
+                      <span className="mono">{formatNaira(editingRecord.rate)}</span>
+                    </button>
+                    <button className={`ot-option ${editingRecord.isOvertime ? 'selected' : ''}`} onClick={()=>handleOvertimeAction('overtime')}>
+                      <span className="ot-opt-left"><span className="mini-stamp ot">OT</span> Overtime 2×</span>
+                      <span className="mono">{formatNaira(editingRecord.rate * settings.weekendMultiplier)}</span>
+                    </button>
+                    <button className={`ot-option ${editingRecord.isHoliday ? 'selected' : ''}`} onClick={()=>handleOvertimeAction('holiday')}>
+                      <span className="ot-opt-left"><span className="mini-stamp hol">HOL</span> Holiday 2×</span>
+                      <span className="mono">{formatNaira(editingRecord.rate * settings.holidayMultiplier)}</span>
+                    </button>
+                    {leaveTypes.length > 0 && <div className="leave-divider">Mark as leave</div>}
+                    {leaveTypes.map(t => {
+                      const pay = leavePayFor(t, editingRecord.rate)
+                      const initials = (t.name || 'LV').replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || 'LV'
+                      return (
+                        <button key={t.id} className={`ot-option ${editingRecord.isLeave && editingRecord.leaveType===t.id ? 'selected' : ''}`} onClick={()=>handleOvertimeAction(`leave-${t.id}`)}>
+                          <span className="ot-opt-left"><span className={`mini-stamp ${pay>0 ? 'lv' : 'lv-u'}`}>{initials}</span> {t.name}</span>
+                          <span className="mono">{pay > 0 ? `${formatNaira(pay)}${t.payMode!=='flat' ? ` · ${t.payValue}%` : ''}` : formatNaira(0)}</span>
+                        </button>
+                      )
+                    })}
+                    <button className="ot-option danger" onClick={()=>handleOvertimeAction('remove')}>
+                      <span className="ot-opt-left"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Remove</span>
+                      <span className="mono">Delete</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSettings && (
+        <div className="phone-frame sp-page">
+          <header className="sp-header">
+            <button className="sp-back" onClick={()=>setShowSettings(false)} aria-label="Back" title="Back to app">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <div className="sp-title">
+              <span className="sp-title-main">Settings</span>
+              <span className="sp-title-sub">DayPay · Preferences</span>
+            </div>
+            {isSupabaseConfigured && syncStatus!=='idle' && (
+              <span className={`sync-badge ${syncStatus}`}>{syncStatus==='syncing'?'syncing…':syncStatus==='synced'?'synced ✓':'error'}</span>
+            )}
+          </header>
+
+          <div className="sp-scroll">
+            <div className="sp-card sp-profile">
+              {user ? (
+                <>
+                  <div className="welcome-avatar sp-avatar">{(displayName || user.email).charAt(0).toUpperCase()}</div>
+                  <div className="sp-profile-main">
+                    <input className="sp-name-input" value={profileName} onChange={e=>setProfileName(e.target.value)} placeholder="Your display name" maxLength={40} />
+                    <span className="sp-email">{user.email}</span>
+                  </div>
+                  <button className="sp-save-name" onClick={handleSaveProfileName} disabled={profileSaving || !profileName.trim()}>{profileSaving ? 'Saving…' : 'Save'}</button>
+                </>
+              ) : isSupabaseConfigured ? (
+                <>
+                  <div className="sp-avatar sp-avatar-ghost">
+                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                  </div>
+                  <div className="sp-profile-main">
+                    <span className="sp-profile-name">Not signed in</span>
+                    <span className="sp-email">Sign in to sync your records across devices</span>
+                  </div>
+                  <button className="btn-primary sp-signin" onClick={()=>{setAuthMode('signin'); setShowAuth(true)}}>Sign in</button>
+                </>
+              ) : (
+                <>
+                  <div className="sp-avatar sp-avatar-ghost">
+                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m2 2 20 20"/><path d="M5.8 5.8A7 7 0 0 0 15.6 17.8"/><path d="M8.6 8.6a4.5 4.5 0 0 0 6.1 6.1"/><path d="M17.5 17.9A4.5 4.5 0 0 0 16.9 9h-1.8"/></svg>
+                  </div>
+                  <div className="sp-profile-main">
+                    <span className="sp-profile-name">Local only</span>
+                    <span className="sp-email">Cloud sync not configured — data stays on this device</span>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="sp-section-label">Earnings</div>
+            <div className="sp-card">
+              <div className="sp-row">
+                <span className="sp-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="2" y="6" width="20" height="12" rx="2.5"/><circle cx="12" cy="12" r="2.6"/><path d="M6 12h.01M18 12h.01"/></svg></span>
+                <span className="sp-row-main">
+                  <span className="sp-row-title">Daily rate</span>
+                  <span className="sp-row-sub">Base pay per work day</span>
+                </span>
+                <span className="sp-input-wrap"><span className="sp-input-prefix">₦</span><input className="sp-input" value={rateInput} onChange={e=>setRateInput(e.target.value.replace(/[^0-9,]/g,''))} inputMode="numeric" placeholder="16000" /></span>
+              </div>
+              <div className="sp-row">
+                <span className="sp-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></svg></span>
+                <span className="sp-row-main">
+                  <span className="sp-row-title">Monthly goal</span>
+                  <span className="sp-row-sub">Drives the progress ring in your summary</span>
+                </span>
+                <span className="sp-input-wrap"><span className="sp-input-prefix">₦</span><input className="sp-input" value={goalInput} onChange={e=>setGoalInput(e.target.value.replace(/[^0-9,]/g,''))} inputMode="numeric" placeholder="500000" /></span>
+              </div>
+              <div className="sp-row">
+                <span className="sp-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="4" width="18" height="17" rx="2.5"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
+                <span className="sp-row-main">
+                  <span className="sp-row-title">Payday</span>
+                  <span className="sp-row-sub">Day of month you get paid · 0 = last day</span>
+                </span>
+                <span className="sp-input-wrap sp-input-day"><input className="sp-input" value={paydayInput} onChange={e=>setPaydayInput(e.target.value.replace(/[^0-9]/g,''))} inputMode="numeric" placeholder="0" /></span>
+              </div>
+            </div>
+
+            <div className="sp-section-label">Leave types</div>
+            <div className="sp-card sp-lt-card">
+              <div className="lt-list">
+                {(ltDraft || []).map((t, i) => (
+                  <div className="lt-row" key={t.id}>
+                    <input className="lt-name" value={t.name} onChange={e=>updateLtDraft(i, {name: e.target.value})} placeholder="Leave name" maxLength={40} />
+                    <div className="lt-pay">
+                      <button type="button" className={`lt-mode ${t.payMode!=='flat'?'on':''}`} onClick={()=>updateLtDraft(i, {payMode: t.payMode==='flat'?'percent':'flat'})} title="Toggle: % of daily rate / flat ₦ per day">{t.payMode==='flat' ? '₦' : '%'}</button>
+                      <input className="lt-value" inputMode="decimal" value={t.payValue} onChange={e=>updateLtDraft(i, {payValue: e.target.value.replace(/[^0-9.]/g,'')})} title={t.payMode==='flat' ? 'Flat ₦ per leave day' : '% of your daily rate'} />
+                    </div>
+                    <button type="button" className="lt-del" onClick={()=>removeLtDraft(i)} title="Delete this leave type">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                    </button>
+                  </div>
+                ))}
+                <button type="button" className="lt-add" onClick={addLtDraft}>+ Add leave type</button>
+              </div>
+            </div>
+            <p className="sp-hint"><strong>%</strong> = share of your daily rate (50 = half pay) · <strong>₦</strong> = flat amount per day. Already-logged days keep their original amounts.</p>
+
+            <div className="sp-section-label">Your pay rates</div>
+            <div className="sp-card">
+              <div className="sp-kv"><span>Regular (OK)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate)}</span></div>
+              <div className="sp-kv"><span>Weekend (2×)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span></div>
+              <div className="sp-kv"><span>Overtime (OT 2×)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span></div>
+              <div className="sp-kv"><span>Holiday (HOL 2×)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate*settings.holidayMultiplier)}</span></div>
+              {leaveTypes.map(t => (
+                <div className="sp-kv" key={`ib-${t.id}`}><span>{t.name}</span><span className="sp-kv-val">{t.payMode!=='flat' ? `${t.payValue}% · ` : ''}{formatNaira(leavePayFor(t, settings.dailyRate))}</span></div>
+              ))}
+              <div className="sp-kv"><span>Payday</span><span className="sp-kv-val">{settings.paydayDay > 0 ? `Day ${ordDay(settings.paydayDay)}` : 'Last day of month'}</span></div>
+            </div>
+            <p className="sp-hint">Weekdays: OK → edit to OT · Weekends auto 2× · Holidays auto HOL 2× (Nigeria).</p>
+
+            <div className="sp-section-label">Tracking</div>
+            <div className="sp-card">
+              <div className="sp-kv"><span>Current month</span><span className="sp-kv-val">{getMonthName(realMonth)} {realYear} · Active</span></div>
+              <div className="sp-kv"><span>Tracking started</span><span className="sp-kv-val">{startMonthKey || 'Not set'}</span></div>
+              <div className="sp-kv"><span>Cloud sync</span><span className="sp-kv-val" style={{color: isSupabaseConfigured ? 'var(--green-ink)' : 'var(--danger)'}}>{isSupabaseConfigured ? (user ? 'Connected' : 'Ready — sign in') : 'Not configured'}</span></div>
+            </div>
+            <div className="sp-notes">
+              <span>• Only the current month is editable</span>
+              <span>• Previous months lock with final salary preserved</span>
+              <span>• Holidays auto-detected (Nigeria) with HOL stamp</span>
+              <span>• PWA: installable, offline-ready</span>
+            </div>
+
+            <div className="sp-storage">DayPay — Know what your work is worth. {isSupabaseConfigured && user ? `Synced for ${displayName || user.email}.` : 'Local.'} PWA ready. © 2026 Akaninyene — All rights reserved.</div>
+          </div>
+
+          <div className="sp-savebar">
+            <span className="sp-savebar-note">Changes apply on save</span>
+            <button className="btn-primary sp-save-btn" onClick={handleSaveRate}>Save changes</button>
+          </div>
+        </div>
+      )}
+
+      {showAuth && (
+        <div className="modal-overlay" onClick={()=>{setShowAuth(false); setShowForgot(false); setForgotSent(false)}}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{display:'flex', alignItems:'center', gap:10}}>
+                <img src={theme==='dark' ? "/daypay-icon-dark.svg" : "/daypay-icon.svg"} alt="DayPay" style={{width:28, height:28}} />
+                <span>{showForgot ? 'Reset password' : authMode==='signin' ? 'Sign in to DayPay' : 'Create DayPay account'}</span>
+              </div>
+              <button className="icon-btn small" onClick={()=>{setShowAuth(false); setShowForgot(false); setForgotSent(false)}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+            </div>
+            <div className="modal-body">
+              <div style={{textAlign:'center', marginBottom:18}}>
+                <img src={theme==='dark' ? "/daypay-logo-dark.svg" : "/daypay-logo.svg"} alt="DayPay" style={{height:40, marginBottom:8}} />
+                <div className="daypay-tagline">Know what your work is worth.</div>
+              </div>
+              {!showForgot ? (
+                <form onSubmit={handleAuthSubmit}>
+                  {authMode==='signup' && (
+                    <>
+                      <label className="field-label">Full name</label>
+                      <div className="field-wrap" style={{marginBottom:12}}>
+                        <input className="field-input" type="text" required value={authForm.name} onChange={e=>setAuthForm({...authForm, name:e.target.value})} placeholder="e.g. John Doe" />
+                      </div>
+                    </>
+                  )}
+                  <label className="field-label">Email</label>
+                  <div className="field-wrap" style={{marginBottom:12}}>
+                    <input className="field-input" type="email" required value={authForm.email} onChange={e=>setAuthForm({...authForm, email:e.target.value})} placeholder="you@example.com" />
+                  </div>
+                  <label className="field-label">Password</label>
+                  <div className="field-wrap">
+                    <input className="field-input" type="password" required minLength={6} value={authForm.password} onChange={e=>setAuthForm({...authForm, password:e.target.value})} placeholder="••••••••" />
+                  </div>
+                  {authMode==='signin' && (
+                    <button type="button" className="link-btn" onClick={()=>{setShowForgot(true); setForgotEmail(authForm.email); setForgotSent(false); setAuthError('')}}>Forgot password?</button>
+                  )}
+                  {authError && <div className="auth-error">{authError}</div>}
+                  <div className="modal-actions" style={{marginTop:18}}>
+                    <button type="button" className="btn-secondary" onClick={()=>setAuthMode(authMode==='signin'?'signup':'signin')}>{authMode==='signin' ? 'Need account? Sign up' : 'Have account? Sign in'}</button>
+                    <button type="submit" className="btn-primary" disabled={authBusy}>{authBusy ? 'Please wait…' : authMode==='signin' ? 'Sign in' : 'Sign up'}</button>
+                  </div>
+                </form>
+              ) : (
+                <form onSubmit={handleForgotPassword}>
+                  <label className="field-label">Reset password</label>
+                  <p className="field-hint" style={{marginBottom:12}}>Enter email for reset link.</p>
+                  <div className="field-wrap" style={{marginBottom:12}}>
+                    <input className="field-input" type="email" required value={forgotEmail} onChange={e=>setForgotEmail(e.target.value)} placeholder="you@example.com" />
+                  </div>
+                  {forgotSent ? <div className="success-banner">✅ Reset link sent! Check email.</div> : authError && <div className="auth-error">{authError}</div>}
+                  <div className="modal-actions" style={{marginTop:18}}>
+                    <button type="button" className="btn-secondary" onClick={()=>setShowForgot(false)}>Back</button>
+                    <button type="submit" className="btn-primary" disabled={forgotBusy || forgotSent}>{forgotBusy ? 'Sending…' : forgotSent ? 'Sent ✓' : 'Send link'}</button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRecovery && (
+        <div className="modal-overlay" onClick={()=>setShowRecovery(false)}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div className="modal-header"><span>Set new password</span><button className="icon-btn small" onClick={()=>setShowRecovery(false)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+            <div className="modal-body">
+              <form onSubmit={handleRecoverySubmit}>
+                <label className="field-label">New password</label>
+                <div className="field-wrap" style={{marginBottom:12}}>
+                  <input className="field-input" type="password" required minLength={6} value={newPassword} onChange={e=>setNewPassword(e.target.value)} placeholder="••••••••" />
+                </div>
+                {recoveryError && <div className="auth-error">{recoveryError}</div>}
+                <div className="modal-actions" style={{marginTop:18}}>
+                  <button type="button" className="btn-secondary" onClick={()=>setShowRecovery(false)}>Cancel</button>
+                  <button type="submit" className="btn-primary" disabled={recoveryBusy}>{recoveryBusy ? 'Saving…' : 'Save'}</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

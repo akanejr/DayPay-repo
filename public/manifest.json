@@ -1,0 +1,47 @@
+{
+  "name": "DayPay — Know what your work is worth.",
+  "short_name": "DayPay",
+  "description": "Track attendance, weekend overtime 2×, weekday overtime OT, and salary with monthly locking.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0B1B32",
+  "theme_color": "#0B1B32",
+  "orientation": "portrait",
+  "categories": ["finance", "productivity", "business"],
+  "icons": [
+    {
+      "src": "/daypay-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/daypay-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Log Today",
+      "short_name": "Today",
+      "description": "Log work for today",
+      "url": "/?action=today",
+      "icons": [{ "src": "/daypay-icon-512.png", "sizes": "512x512" }]
+    },
+    {
+      "name": "Year View",
+      "short_name": "Year",
+      "description": "View yearly salary",
+      "url": "/?view=year",
+      "icons": [{ "src": "/daypay-icon-512.png", "sizes": "512x512" }]
+    }
+  ]
+}
