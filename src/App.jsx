@@ -154,6 +154,9 @@ export default function App() {
   const [showShareMenu, setShowShareMenu] = useState(false)
   const shareMenuRef = useRef(null)
 
+  const [showYearShareMenu, setShowYearShareMenu] = useState(false)
+  const yearShareMenuRef = useRef(null)
+
   const [showSplash, setShowSplash] = useState(true)
   const splashStartRef = useRef(Date.now())
 
@@ -263,6 +266,16 @@ export default function App() {
       return () => document.removeEventListener('mousedown', handleClickOutside)
     }
   }, [showShareMenu])
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (yearShareMenuRef.current && !yearShareMenuRef.current.contains(e.target)) setShowYearShareMenu(false)
+    }
+    if (showYearShareMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showYearShareMenu])
 
   // Draft copy of leave types while the Settings modal is open (applied on Save)
   useEffect(() => {
@@ -879,6 +892,181 @@ export default function App() {
     window.open(`https://wa.me/?text=${encodeURIComponent(buildPayslipText())}`, '_blank', 'noopener')
   }
 
+  function yearlySummaryFilename() {
+    return `DayPay_Yearly_Summary_${year}_${displayName || 'Employee'}.pdf`
+  }
+
+  function getYearMonthsForShare() {
+    // Same month list the yearly card shows (respects the tracking start month)
+    if (!startMonthKey) return yearlyStats.monthly
+    const { year: sY, month: sM } = parseMonthKey(startMonthKey)
+    if (year < sY) return []
+    if (year === sY) return yearlyStats.monthly.filter(m => m.month >= sM)
+    return yearlyStats.monthly
+  }
+
+  function generateYearlyDoc() {
+    const doc = new jsPDF()
+    const pageW = doc.internal.pageSize.getWidth()
+
+    // DayPay branding
+    doc.setFillColor(11,27,50) // Navy #0B1B32
+    doc.rect(0,0,pageW,28,'F')
+    doc.setFont('helvetica','bold')
+    doc.setFontSize(18)
+    doc.setTextColor(255,255,255)
+    doc.text('DayPay', 14, 18)
+    doc.setFontSize(10)
+    doc.setTextColor(21,128,61) // Green
+    doc.text('Know what your work is worth.', 50, 18)
+    doc.setFontSize(9)
+    doc.setTextColor(255,255,255)
+    doc.text(`Yearly Summary ${year}`, pageW-14, 18, { align: 'right' })
+
+    // Employee info
+    doc.setTextColor(11,27,50)
+    doc.setFontSize(14)
+    doc.setFont('helvetica','bold')
+    doc.text(displayName || 'Employee', 14, 40)
+    doc.setFontSize(10)
+    doc.setFont('helvetica','normal')
+    doc.setTextColor(100,100,100)
+    doc.text(user?.email || 'Local user', 14, 46)
+    doc.text(`Daily Rate: ${formatNaira(settings.dailyRate)} | Weekend/OT: ${settings.weekendMultiplier}× | Holiday: ${settings.holidayMultiplier}×`, 14, 52)
+    const yearStatus = year === realYear ? 'IN PROGRESS' : 'FINAL'
+    doc.text(`Period: January – December ${year} | Status: ${yearStatus}`, 14, 58)
+
+    // Summary
+    doc.setFont('helvetica','bold')
+    doc.setTextColor(11,27,50)
+    doc.setFontSize(12)
+    doc.text('Yearly Summary', 14, 70)
+    doc.setFontSize(22)
+    doc.setTextColor(21,128,61)
+    doc.text(formatNaira(yearlyStats.total), 14, 80)
+    doc.setFontSize(10)
+    doc.setTextColor(100,100,100)
+    doc.setFont('helvetica','normal')
+    doc.text(`${yearlyStats.days} days worked · ${yearlyStats.regularDays} regular · ${yearlyStats.weekendDays} weekend · ${yearlyStats.overtimeDays} OT · ${yearlyStats.holidayDays} holiday · ${yearlyStats.leaveDays} leave`, 14, 86)
+
+    // Breakdown
+    let y = 96
+    doc.setFont('helvetica','bold')
+    doc.setTextColor(11,27,50)
+    doc.setFontSize(11)
+    doc.text('Breakdown', 14, y)
+    y += 6
+    doc.setFont('helvetica','normal')
+    doc.setFontSize(10)
+    const yrows = [
+      ['Regular', `${yearlyStats.regularDays} days`, `${yearlyStats.regularDays} × ${formatNaira(settings.dailyRate)}`, formatNaira(yearlyStats.regularDays * settings.dailyRate)],
+      ['Weekend 2×', `${yearlyStats.weekendDays} days`, `${yearlyStats.weekendDays} × ${formatNaira(settings.dailyRate*settings.weekendMultiplier)}`, formatNaira(yearlyStats.weekendDays * settings.dailyRate*settings.weekendMultiplier)],
+      ['Overtime OT 2×', `${yearlyStats.overtimeDays} days`, `${yearlyStats.overtimeDays} × ${formatNaira(settings.dailyRate*settings.weekendMultiplier)}`, formatNaira(yearlyStats.overtimeDays * settings.dailyRate*settings.weekendMultiplier)],
+      ['Holiday 2×', `${yearlyStats.holidayDays} days`, `${yearlyStats.holidayDays} × ${formatNaira(settings.dailyRate*settings.holidayMultiplier)}`, formatNaira(yearlyStats.holidayDays * settings.dailyRate*settings.holidayMultiplier)],
+      ['Leave', `${yearlyStats.leaveDays} days`, 'per your leave settings', formatNaira(yearlyStats.leavePay)],
+    ]
+    yrows.forEach(r => {
+      doc.text(r[0], 14, y)
+      doc.text(r[1], 50, y)
+      doc.text(r[2], 80, y)
+      doc.text(r[3], 150, y)
+      y += 6
+    })
+    y += 4
+    doc.setFont('helvetica','bold')
+    doc.text(`Total for ${year}: ${formatNaira(yearlyStats.total)}`, 14, y)
+    if (settings.salaryGoal > 0) {
+      y += 6
+      doc.setFont('helvetica','normal')
+      doc.setTextColor(100,100,100)
+      doc.text(`Yearly goal: ${formatNaira(settings.salaryGoal * 12)} · ${goalProgressYear}% reached`, 14, y)
+    }
+    y += 12
+
+    // Monthly breakdown
+    doc.setFont('helvetica','bold')
+    doc.setTextColor(11,27,50)
+    doc.setFontSize(11)
+    doc.text(`Monthly Breakdown — ${year}`, 14, y)
+    y += 6
+    doc.setFont('helvetica','normal')
+    doc.setFontSize(9)
+    doc.setTextColor(80,80,80)
+    doc.text('Month', 14, y)
+    doc.text('Days', 80, y)
+    doc.text('Amount', 130, y)
+    y += 4
+    doc.setDrawColor(200,200,200)
+    doc.line(14, y, pageW-14, y)
+    y += 6
+    const months = getYearMonthsForShare().filter(m => m.days > 0 || m.total > 0)
+    const best = months.reduce((a, m) => (m.total > (a ? a.total : -1) ? m : a), null)
+    months.forEach(m => {
+      const isBest = best && m.month === best.month && m.total > 0 && months.length > 1
+      doc.text(getMonthName(m.month), 14, y)
+      doc.text(`${m.days}d`, 80, y)
+      if (isBest) { doc.setFont('helvetica','bold'); doc.setTextColor(21,128,61) }
+      doc.text(m.total > 0 ? formatNaira(m.total) : '₦0', 130, y)
+      if (isBest) { doc.setFont('helvetica','normal'); doc.setTextColor(80,80,80) }
+      y += 6
+    })
+    y += 2
+    doc.setFont('helvetica','bold')
+    doc.setTextColor(11,27,50)
+    doc.text(`Total ${year}`, 14, y)
+    doc.setTextColor(21,128,61)
+    doc.text(formatNaira(yearlyStats.total), 130, y)
+
+    // Footer
+    doc.setFontSize(8)
+    doc.setTextColor(150,150,150)
+    doc.text(`DayPay — Know what your work is worth. Generated ${new Date().toLocaleString()} · ${displayName || 'Employee'} · ${startMonthKey ? `Started ${startMonthKey}` : ''}`, 14, 290)
+    doc.text(`© 2026 Akaninyene. All rights reserved.`, 14, 294)
+
+    return doc
+  }
+
+  function exportYearlySummary() {
+    const doc = generateYearlyDoc()
+    doc.save(yearlySummaryFilename())
+  }
+
+  function buildYearlyText() {
+    const months = getYearMonthsForShare().filter(m => m.days > 0 || m.total > 0)
+    const best = months.reduce((a, m) => (m.total > (a ? a.total : -1) ? m : a), null)
+    const lines = [
+      `📊 DayPay Yearly Summary — ${year}`,
+      ``,
+      `Total: ${formatNaira(yearlyStats.total)}`,
+      `${yearlyStats.days} days worked · ${yearlyStats.regularDays} regular · ${yearlyStats.weekendDays} weekend · ${yearlyStats.overtimeDays} OT · ${yearlyStats.holidayDays} holiday · ${yearlyStats.leaveDays} leave`,
+    ]
+    if (best && best.total > 0) lines.push(`Best month: ${getMonthName(best.month)} · ${formatNaira(best.total)}`)
+    if (settings.salaryGoal > 0) lines.push(`Yearly goal: ${formatNaira(settings.salaryGoal * 12)} · ${goalProgressYear}% reached`)
+    lines.push(``, `— DayPay · Know what your work is worth.`)
+    return lines.join('\n')
+  }
+
+  async function shareYearlyToWhatsApp() {
+    setShowYearShareMenu(false)
+    // Best path: share the actual yearly PDF via the native share sheet (user picks WhatsApp).
+    try {
+      const doc = generateYearlyDoc()
+      const file = new File([doc.output('blob')], yearlySummaryFilename(), { type: 'application/pdf' })
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          text: `DayPay Yearly Summary — ${year}: ${formatNaira(yearlyStats.total)} · ${yearlyStats.days} days worked`,
+          title: 'DayPay Yearly Summary',
+        })
+        return
+      }
+    } catch (err) {
+      if (err && err.name === 'AbortError') return // user closed the share sheet — not an error
+    }
+    // Fallback: WhatsApp text summary via wa.me
+    window.open(`https://wa.me/?text=${encodeURIComponent(buildYearlyText())}`, '_blank', 'noopener')
+  }
+
   const displayName = user?.user_metadata?.full_name || profileName || user?.email?.split('@')[0] || ''
 
   const statusConfig = {
@@ -1237,7 +1425,7 @@ export default function App() {
               </div>
 
               <div style={{position:'relative', marginTop:14}} ref={shareMenuRef}>
-                <button className="btn-secondary" style={{width:'100%', height:40, display:'flex', alignItems:'center', justifyContent:'center', gap:8}} onClick={()=>setShowShareMenu(v=>!v)} disabled={(monthlyStats.days + monthlyStats.leaveDays)===0}>
+                <button className="btn-secondary" style={{width:'100%', height:40, display:'flex', alignItems:'center', justifyContent:'center', gap:8}} onClick={()=>{ setShowYearShareMenu(false); setShowShareMenu(v=>!v) }} disabled={(monthlyStats.days + monthlyStats.leaveDays)===0}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
                   Share Payslip
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" style={{marginLeft:2, opacity:.6}}><polyline points="6 9 12 15 18 9"/></svg>
@@ -1341,6 +1529,36 @@ export default function App() {
                   <div className="ab-total">
                     <span>Total {year} {startMonthKey && year===parseMonthKey(startMonthKey).year ? `(from ${getMonthName(parseMonthKey(startMonthKey).month)})` : ''}</span>
                     <span className="mono" style={{color:'var(--daypay-green)'}}>{formatNaira(yearlyStats.total)}</span>
+                  </div>
+                )}
+              </div>
+
+              <div style={{position:'relative', marginTop:14}} ref={yearShareMenuRef}>
+                <button className="btn-secondary" style={{width:'100%', height:40, display:'flex', alignItems:'center', justifyContent:'center', gap:8}} onClick={()=>{ setShowShareMenu(false); setShowYearShareMenu(v=>!v) }} disabled={(yearlyStats.days + yearlyStats.leaveDays)===0}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+                  Share Yearly Summary
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" style={{marginLeft:2, opacity:.6}}><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                {showYearShareMenu && (
+                  <div className="share-dropdown">
+                    <button className="share-option" onClick={shareYearlyToWhatsApp}>
+                      <span className="share-option-icon wa">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.52.149-.174.198-.298.297-.497.1-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
+                      </span>
+                      <span className="share-option-text">
+                        <strong>Share to WhatsApp</strong>
+                        <em>PDF via share sheet · text summary fallback</em>
+                      </span>
+                    </button>
+                    <button className="share-option" onClick={()=>{ setShowYearShareMenu(false); exportYearlySummary() }}>
+                      <span className="share-option-icon pdf">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                      </span>
+                      <span className="share-option-text">
+                        <strong>Export as PDF</strong>
+                        <em>Download the yearly summary</em>
+                      </span>
+                    </button>
                   </div>
                 )}
               </div>
