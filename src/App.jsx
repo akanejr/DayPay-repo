@@ -1164,12 +1164,13 @@ export default function App() {
       <div className="phone-frame">
         <header className="header">
           <div className="header-left">
-            <img 
-              src={theme==='dark' ? "/daypay-logo-dark.svg" : "/daypay-logo.svg"} 
-              alt="DayPay" 
-              style={{height: '34px', width: 'auto', display: 'block'}} 
-              title="DayPay - Know what your work is worth." 
-            />
+            <span className="hdr-lockup" title="DayPay - Know what your work is worth.">
+              <svg className="hdr-mark" viewBox="0 0 48 48" width="27" height="27" role="img" aria-label="DayPay logo">
+                <rect x="15" y="16" width="26" height="26" rx="7" fill="var(--daypay-green)"/>
+                <rect x="7" y="8" width="26" height="26" rx="7" fill={theme==='dark' ? '#0D1424' : '#FFFFFF'} stroke={theme==='dark' ? '#2A3550' : '#0B1B32'} strokeWidth="4"/>
+              </svg>
+              <span className="wordmark"><span className="wm-day">Day</span><span className="wm-pay">Pay</span></span>
+            </span>
             {isSupabaseConfigured && syncStatus!=='idle' && (
               <span className={`sync-badge ${syncStatus}`}>{syncStatus==='syncing'?'syncing…':syncStatus==='synced'?'synced ✓':'error'}</span>
             )}
@@ -1828,7 +1829,13 @@ export default function App() {
             </div>
             <div className="modal-body">
               <div style={{textAlign:'center', marginBottom:18}}>
-                <img src={theme==='dark' ? "/daypay-logo-dark.svg" : "/daypay-logo.svg"} alt="DayPay" style={{height:40, marginBottom:8}} />
+                <span className="hdr-lockup" style={{justifyContent:'center', marginBottom:8}} title="DayPay - Know what your work is worth.">
+                  <svg className="hdr-mark" viewBox="0 0 48 48" width="30" height="30" role="img" aria-label="DayPay logo">
+                    <rect x="15" y="16" width="26" height="26" rx="7" fill="var(--daypay-green)"/>
+                    <rect x="7" y="8" width="26" height="26" rx="7" fill={theme==='dark' ? '#0D1424' : '#FFFFFF'} stroke={theme==='dark' ? '#2A3550' : '#0B1B32'} strokeWidth="4"/>
+                  </svg>
+                  <span className="wordmark" style={{fontSize:'21px'}}><span className="wm-day">Day</span><span className="wm-pay">Pay</span></span>
+                </span>
                 <div className="daypay-tagline">Know what your work is worth.</div>
               </div>
               {!showForgot ? (
