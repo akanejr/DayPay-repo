@@ -40,6 +40,68 @@ const THEME_OPTIONS = [
   { id: 'glass-dark', label: 'Glass · Dark', sw: 'sw-glass-dark' },
   { id: 'glass-light', label: 'Glass · Light', sw: 'sw-glass-light' },
 ]
+
+// v18-C: Export my data — one tap in Settings downloads the raw record.
+// JSON = every record + setting (a full backup); CSV = one row per worked day.
+function fileDateStamp(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+function sortedDayRecords(attendance) {
+  return Object.values(attendance || {}).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+}
+function csvCell(v) {
+  const s = String(v)
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
+function buildDayPayBackup(attendance, settings, leaveTypes) {
+  const records = sortedDayRecords(attendance)
+  const total = records.reduce((s, r) => s + (r.amount || 0), 0)
+  return JSON.stringify({
+    app: 'DayPay',
+    format: 'daypay-backup',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    records,
+    settings: {
+      dailyRate: settings.dailyRate,
+      weekendMultiplier: settings.weekendMultiplier,
+      holidayMultiplier: settings.holidayMultiplier,
+      salaryGoal: settings.salaryGoal,
+      paydayDay: settings.paydayDay,
+      startMonthKey: settings.startMonthKey ?? null,
+      ratePeriods: settings.ratePeriods ?? [],
+      leaveTypes,
+    },
+    summary: {
+      days: records.length,
+      totalEarned: total,
+      firstDay: records.length ? records[0].date : null,
+      lastDay: records.length ? records[records.length - 1].date : null,
+    },
+  }, null, 2)
+}
+function buildDayPayCsv(attendance) {
+  const rows = ['date,day,type,rate,amount']
+  for (const r of sortedDayRecords(attendance)) {
+    const d = new Date(`${r.date}T00:00:00`)
+    const day = isNaN(d) ? '' : d.toLocaleDateString('en-GB', { weekday: 'short' })
+    const type = r.isOvertime ? 'overtime' : r.isWeekend ? 'weekend' : r.isHoliday ? 'holiday' : r.isLeave ? 'leave' : 'work'
+    rows.push([r.date, day, type, r.rate ?? 0, r.amount ?? 0].map(csvCell).join(','))
+  }
+  return rows.join('\r\n') + '\r\n'
+}
+function triggerDownload(name, content, mime) {
+  try {
+    const url = URL.createObjectURL(new Blob([content], { type: mime }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1500)
+  } catch {}
+}
 function getMonthName(monthIndex, short = false) {
   const names = short
     ? ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
@@ -813,6 +875,13 @@ export default function App() {
     }
     setEditingKey(null)
     setEditingDate(null)
+  }
+
+  function handleExportJson() {
+    triggerDownload(`DayPay-backup-${fileDateStamp()}.json`, buildDayPayBackup(attendance, settings, leaveTypes), 'application/json')
+  }
+  function handleExportCsv() {
+    triggerDownload(`DayPay-earnings-${fileDateStamp()}.csv`, buildDayPayCsv(attendance), 'text/csv')
   }
 
   function goPrevMonth(){
@@ -2124,6 +2193,19 @@ export default function App() {
                 </span>
                 <span className="sp-input-wrap sp-input-day"><input className="sp-input" value={paydayInput} onChange={e=>setPaydayInput(e.target.value.replace(/[^0-9]/g,''))} inputMode="numeric" placeholder="0" /></span>
               </div>
+            </div>
+
+            <div className="sp-section-label">Your data</div>
+            <div className="sp-card sp-export">
+              <div className="sp-export-head">
+                <span className="sp-export-title">Export my data</span>
+                <span className="sp-export-sub">Every day, rate and setting — as a file you own.</span>
+              </div>
+              <div className="sp-export-row">
+                <button type="button" className="sp-export-btn primary" onClick={handleExportJson}>⬇ JSON · everything</button>
+                <button type="button" className="sp-export-btn ghost" onClick={handleExportCsv}>⬇ CSV · one row per day</button>
+              </div>
+              <p className="sp-hint">One row per worked day — rate is that day's own rate, amount is what it actually paid, even after rate changes. JSON carries every record and setting for a full restore.</p>
             </div>
 
             <div className="sp-section-label">Leave types</div>

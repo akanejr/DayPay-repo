@@ -1523,3 +1523,16 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .theme-sw.sw-glass-dark { background: radial-gradient(120% 90% at 85% -10%, rgba(34,222,94,.45), transparent 55%), radial-gradient(130% 100% at -10% 110%, rgba(30,64,110,.65), transparent 60%), #080C16; border-color: rgba(255,255,255,.3); }
 .theme-sw.sw-glass-light { background: radial-gradient(95% 75% at 92% -6%, rgba(21,128,61,.14), transparent 60%), linear-gradient(180deg, #FFFFFF, #F2F8F4); }
 .theme-check { margin-left: auto; color: var(--green-ink); font-weight: 800; }
+
+/* ===== v18-C: Export my data (Settings → Your data) ===== */
+.sp-export { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.sp-export-head { display: flex; flex-direction: column; gap: 2px; }
+.sp-export-title { font-size: 13.5px; font-weight: 800; letter-spacing: -0.01em; color: var(--text); }
+.sp-export-sub { font-size: 11.5px; font-weight: 500; color: var(--text-3); }
+.sp-export-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.sp-export-btn { flex: 1 1 140px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 10px; padding: 10px 10px; font-family: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer; border: 1px solid transparent; transition: filter 0.13s ease, background 0.13s ease, color 0.13s ease; }
+.sp-export-btn.primary { background: var(--green-ink); color: var(--bg); }
+.sp-export-btn.primary:hover { filter: brightness(1.08); }
+.sp-export-btn.ghost { background: transparent; border-color: var(--border); color: var(--text-2); }
+.sp-export-btn.ghost:hover { background: var(--bg-cell-hover); color: var(--text); }
+.sp-export .sp-hint { margin: 0; }
