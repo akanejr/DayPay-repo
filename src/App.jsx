@@ -741,10 +741,15 @@ export default function App() {
     doc.setFont('helvetica','bold')
     doc.setFontSize(18)
     doc.setTextColor(255,255,255)
-    doc.text('DayPay', 14, 18)
+    // Brand mark: refined stacked squares
+    doc.setFillColor(22,163,74)
+    doc.roundedRect(18, 10.5, 16, 16, 4, 4, 'F')
+    doc.setFillColor(255,255,255)
+    doc.roundedRect(14, 6.5, 16, 16, 4, 4, 'F')
+    doc.text('DayPay', 37, 18)
     doc.setFontSize(10)
     doc.setTextColor(21,128,61) // Green
-    doc.text('Know what your work is worth.', 50, 18)
+    doc.text('Know what your work is worth.', 62, 18)
     doc.setFontSize(9)
     doc.setTextColor(255,255,255)
     doc.text(`${getMonthName(month)} ${year} Payslip`, pageW-14, 18, { align: 'right' })
@@ -915,10 +920,15 @@ export default function App() {
     doc.setFont('helvetica','bold')
     doc.setFontSize(18)
     doc.setTextColor(255,255,255)
-    doc.text('DayPay', 14, 18)
+    // Brand mark: refined stacked squares
+    doc.setFillColor(22,163,74)
+    doc.roundedRect(18, 10.5, 16, 16, 4, 4, 'F')
+    doc.setFillColor(255,255,255)
+    doc.roundedRect(14, 6.5, 16, 16, 4, 4, 'F')
+    doc.text('DayPay', 37, 18)
     doc.setFontSize(10)
     doc.setTextColor(21,128,61) // Green
-    doc.text('Know what your work is worth.', 50, 18)
+    doc.text('Know what your work is worth.', 62, 18)
     doc.setFontSize(9)
     doc.setTextColor(255,255,255)
     doc.text(`Yearly Summary ${year}`, pageW-14, 18, { align: 'right' })
@@ -1822,7 +1832,10 @@ export default function App() {
           <div className="modal" onClick={e=>e.stopPropagation()}>
             <div className="modal-header">
               <div style={{display:'flex', alignItems:'center', gap:10}}>
-                <img src={theme==='dark' ? "/daypay-icon-dark.svg" : "/daypay-icon.svg"} alt="DayPay" style={{width:28, height:28}} />
+                <svg className="hdr-mark" viewBox="0 0 48 48" width="21" height="21" role="img" aria-label="DayPay logo">
+                  <rect x="15" y="16" width="26" height="26" rx="7" fill="var(--daypay-green)"/>
+                  <rect x="7" y="8" width="26" height="26" rx="7" fill={theme==='dark' ? '#0D1424' : '#FFFFFF'} stroke={theme==='dark' ? '#2A3550' : '#0B1B32'} strokeWidth="4"/>
+                </svg>
                 <span>{showForgot ? 'Reset password' : authMode==='signin' ? 'Sign in to DayPay' : 'Create DayPay account'}</span>
               </div>
               <button className="icon-btn small" onClick={()=>{setShowAuth(false); setShowForgot(false); setForgotSent(false)}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
