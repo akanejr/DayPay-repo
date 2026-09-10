@@ -1399,3 +1399,30 @@ button:focus-visible, a:focus-visible, input:focus-visible {
     100% { opacity: 0; }
   }
 }
+
+/* ===== v18: Rate history (Settings → Earnings) ===== */
+.sp-rh { display: flex; flex-direction: column; gap: 9px; }
+.sp-rh-head { display: flex; flex-direction: column; gap: 2px; }
+.sp-rh-row { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; background: var(--bg-elevated); }
+.sp-rh-row.future { border: 1.5px dashed var(--green-ink); }
+.sp-rh-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sp-rh-rate { font-weight: 800; font-size: 15px; color: var(--text); }
+.sp-rh-rate em { font-style: normal; font-size: 11px; font-weight: 600; color: var(--text-3); }
+.sp-rh-sub { font-size: 11px; color: var(--text-3); }
+.sp-rh-pill { flex: none; font-size: 10px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; border-radius: 999px; padding: 3px 8px; background: var(--bg-elevated-2); color: var(--text-3); }
+.sp-rh-pill.soon { background: var(--green-wash); color: var(--green-ink); }
+.sp-rh-del { flex: none; border: 0; background: transparent; color: var(--text-3); cursor: pointer; padding: 5px; border-radius: 8px; display: flex; align-items: center; }
+.sp-rh-del:hover { color: var(--danger, #DC2626); background: var(--bg-elevated-2); }
+.sp-rh-add { align-self: flex-start; border: 1.5px dashed var(--green-ink); color: var(--green-ink); background: transparent; border-radius: 10px; padding: 8px 12px; font-weight: 700; font-size: 12px; cursor: pointer; font-family: inherit; }
+.sp-rh-form { display: flex; flex-direction: column; gap: 9px; border: 1px solid var(--border); border-radius: 12px; padding: 11px 12px; background: var(--bg-elevated-2); }
+.sp-rh-frow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sp-rh-flabel { font-size: 12px; font-weight: 700; color: var(--text-2); }
+.sp-rh-fdate { border: 1px solid var(--border); background: var(--bg-elevated); color: var(--text); border-radius: 9px; padding: 7px 9px; font-family: inherit; font-size: 13px; }
+[data-theme="dark"] .sp-rh-fdate { color-scheme: dark; }
+.sp-rh-frate { flex: 1; max-width: 150px; }
+.sp-rh-factions { display: flex; justify-content: flex-end; gap: 8px; }
+.sp-rh-cancel { border: 1px solid var(--border); background: transparent; color: var(--text-2); border-radius: 9px; padding: 8px 12px; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; }
+.sp-rh-apply { padding: 8px 12px; font-size: 12px; }
+.sp-rh-truth { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 2px; }
+.sp-rh-chip { font-size: 10.5px; font-weight: 600; color: var(--text-2); border: 1px solid var(--border); border-radius: 999px; padding: 4px 9px; background: var(--bg); }
+.sp-rh-chip.hi { color: var(--green-ink); border-color: var(--green-ink); background: var(--green-wash); }

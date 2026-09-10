@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
+import { sortPeriods, migratePeriods, rateFor as rateForPeriod } from './lib/rates'
 import jsPDF from 'jspdf'
 
 const STORAGE_KEY = 'work_tracker_v1'
@@ -21,6 +22,16 @@ function isWeekendDay(dateObj) {
 }
 function formatNaira(n) {
   return `₦${Number(n).toLocaleString('en-NG')}`
+}
+// v18: truthful share/PDF line — "N × ₦per-day" only when every day in the
+// group paid the same amount; a mixed-rate group shows "N days" instead.
+function rateLine(n, pay, amt) {
+  const left = (amt && n > 0 && n * amt === pay) ? `${n} × ${formatNaira(amt)}` : `${n} day${n === 1 ? '' : 's'}`
+  return `${left} = ${formatNaira(pay)}`
+}
+function shortDate(key) {
+  const d = new Date(`${key}T00:00:00`)
+  return isNaN(d) ? key : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }
 function getMonthName(monthIndex, short = false) {
   const names = short
@@ -133,13 +144,14 @@ export default function App() {
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const [view, setView] = useState('month')
   const [attendance, setAttendance] = useState({})
-  const [settings, setSettings] = useState({ dailyRate: 16000, weekendMultiplier: 2, holidayMultiplier: 2, salaryGoal: 500000, paydayDay: 0 })
+  const [settings, setSettings] = useState({ dailyRate: 16000, weekendMultiplier: 2, holidayMultiplier: 2, salaryGoal: 500000, paydayDay: 0, ratePeriods: [] })
   const [startMonthKey, setStartMonthKey] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
   const [showFutureDays, setShowFutureDays] = useState(false)
-  const [rateInput, setRateInput] = useState('16000')
   const [goalInput, setGoalInput] = useState('500000')
   const [paydayInput, setPaydayInput] = useState('0')
+  const [rateDraft, setRateDraft] = useState(null) // draft rate periods while Settings is open (applied on Save)
+  const [rateForm, setRateForm] = useState(null)   // { from, rate } — the "Add rate change" inline form
   const [ltDraft, setLtDraft] = useState(null)
   const [loaded, setLoaded] = useState(false)
 
@@ -313,6 +325,19 @@ export default function App() {
     if (showSettings) setLtDraft(leaveTypes.map(t => ({ ...t })))
   }, [showSettings]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Draft copy of rate periods while Settings is open — migrated on first open
+  // (legacy single-rate settings become one period anchored on the earliest log)
+  useEffect(() => {
+    if (showSettings) {
+      const s = { dailyRate: settings.dailyRate, weekendMultiplier: settings.weekendMultiplier, holidayMultiplier: settings.holidayMultiplier }
+      const earliest = Object.keys(attendance).sort()[0]
+      const now = new Date()
+      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+      setRateDraft(migratePeriods(settings.ratePeriods, s, earliest, monthStart))
+      setRateForm(null)
+    }
+  }, [showSettings]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Collapse the "Log a future day" chips when navigating months
   useEffect(() => { setShowFutureDays(false) }, [year, month])
 
@@ -325,15 +350,20 @@ export default function App() {
         const parsed = JSON.parse(raw)
         if (parsed.attendance) { loadedAttendance = parsed.attendance; setAttendance(parsed.attendance) }
         if (parsed.settings) {
-          setSettings({
+          const ls = {
             dailyRate: parsed.settings.dailyRate ?? 16000,
             weekendMultiplier: parsed.settings.weekendMultiplier ?? 2,
             holidayMultiplier: parsed.settings.holidayMultiplier ?? 2,
             salaryGoal: parsed.settings.salaryGoal ?? 500000,
             paydayDay: parsed.settings.paydayDay ?? 0,
             startMonthKey: parsed.settings.startMonthKey
-          })
-          setRateInput(String(parsed.settings.dailyRate ?? 16000))
+          }
+          const earliest = Object.keys(parsed.attendance || {}).sort()[0]
+          const now = new Date()
+          ls.ratePeriods = migratePeriods(parsed.settings.ratePeriods, ls, earliest, `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`)
+          const rt = rateForPeriod(ls.ratePeriods, formatDateKey(now), ls)
+          ls.dailyRate = rt.dailyRate; ls.weekendMultiplier = rt.weekendMultiplier; ls.holidayMultiplier = rt.holidayMultiplier
+          setSettings(ls)
           setGoalInput(String(parsed.settings.salaryGoal ?? 500000))
           setPaydayInput(String(parsed.settings.paydayDay ?? 0))
           if (parsed.settings.startMonthKey) {
@@ -407,14 +437,19 @@ export default function App() {
           const mergedSettings = { ...cloudSettings }
           if (startMonthKey && !mergedSettings.startMonthKey) mergedSettings.startMonthKey = startMonthKey
           if (mergedSettings.startMonthKey) setStartMonthKey(mergedSettings.startMonthKey)
-          setSettings({
+          const cs = {
             dailyRate: mergedSettings.dailyRate ?? 16000,
             weekendMultiplier: mergedSettings.weekendMultiplier ?? 2,
             holidayMultiplier: mergedSettings.holidayMultiplier ?? 2,
             salaryGoal: mergedSettings.salaryGoal ?? 500000,
             paydayDay: mergedSettings.paydayDay ?? 0
-          })
-          setRateInput(String(mergedSettings.dailyRate ?? 16000))
+          }
+          const earliestCloud = Object.keys(mergedAttendance || {}).sort()[0]
+          const nowCloud = new Date()
+          cs.ratePeriods = migratePeriods(mergedSettings.ratePeriods, cs, earliestCloud, `${nowCloud.getFullYear()}-${String(nowCloud.getMonth() + 1).padStart(2, '0')}-01`)
+          const rtc = rateForPeriod(cs.ratePeriods, formatDateKey(nowCloud), cs)
+          cs.dailyRate = rtc.dailyRate; cs.weekendMultiplier = rtc.weekendMultiplier; cs.holidayMultiplier = rtc.holidayMultiplier
+          setSettings(cs)
           setGoalInput(String(mergedSettings.salaryGoal ?? 500000))
           setPaydayInput(String(mergedSettings.paydayDay ?? 0))
           if (hasOfflineNew) {
@@ -511,6 +546,12 @@ export default function App() {
   const monthlyStats = useMemo(() => {
     const prefix = `${year}-${String(month + 1).padStart(2, '0')}-`
     let total = 0, days = 0, weekendDays = 0, regularDays = 0, overtimeDays = 0, holidayDays = 0, leaveDays = 0, leavePay = 0
+    // v18: per-type stored-amount sums (records keep the amounts they were
+    // logged with — never recomputed from current settings) + extra-over-base
+    let regularPay = 0, weekendPay = 0, otPay = 0, holidayPay = 0
+    let weekendExtra = 0, otExtra = 0, holidayExtra = 0
+    const rAmt = new Set(), wAmt = new Set(), oAmt = new Set(), hAmt = new Set()
+    const rates = new Set()
     for (const key in attendance) {
       if (key.startsWith(prefix)) {
         const rec = attendance[key]
@@ -518,19 +559,25 @@ export default function App() {
         if (rec.isLeave) { leaveDays += 1; leavePay += rec.amount }
         else {
           days += 1
-          if (rec.isWeekend) weekendDays += 1
-          else if (rec.isOvertime) overtimeDays += 1
-          else if (rec.isHoliday) holidayDays += 1
-          else regularDays += 1
+          rates.add(rec.rate)
+          if (rec.isWeekend) { weekendDays += 1; weekendPay += rec.amount; weekendExtra += rec.amount - (rec.rate || 0); wAmt.add(rec.amount) }
+          else if (rec.isOvertime) { overtimeDays += 1; otPay += rec.amount; otExtra += rec.amount - (rec.rate || 0); oAmt.add(rec.amount) }
+          else if (rec.isHoliday) { holidayDays += 1; holidayPay += rec.amount; holidayExtra += rec.amount - (rec.rate || 0); hAmt.add(rec.amount) }
+          else { regularDays += 1; regularPay += rec.amount; rAmt.add(rec.amount) }
         }
       }
     }
-    return { total, days, weekendDays, regularDays, overtimeDays, holidayDays, leaveDays, leavePay }
+    const one = s => (s.size === 1 ? [...s][0] : null)
+    return { total, days, weekendDays, regularDays, overtimeDays, holidayDays, leaveDays, leavePay,
+      regularPay, weekendPay, otPay, holidayPay, weekendExtra, otExtra, holidayExtra,
+      regularAmt: one(rAmt), weekendAmt: one(wAmt), otAmt: one(oAmt), holidayAmt: one(hAmt), monthRate: one(rates) }
   }, [attendance, year, month])
 
   const yearlyStats = useMemo(() => {
     const prefix = `${year}-`
     let total = 0, days = 0, weekendDays = 0, overtimeDays = 0, holidayDays = 0, regularDays = 0, leaveDays = 0, leavePay = 0
+    let regularPay = 0, weekendPay = 0, otPay = 0, holidayPay = 0
+    const rAmt = new Set(), wAmt = new Set(), oAmt = new Set(), hAmt = new Set(), rates = new Set()
     const monthly = Array.from({ length: 12 }, (_, m) => ({ month: m, total: 0, days: 0, status: getMonthStatus(year, m) }))
     for (const key in attendance) {
       if (key.startsWith(prefix)) {
@@ -541,17 +588,35 @@ export default function App() {
         if (rec.isLeave) { leaveDays += 1; leavePay += rec.amount }
         else {
           days += 1
-          if (rec.isWeekend) weekendDays += 1
-          else if (rec.isOvertime) overtimeDays += 1
-          else if (rec.isHoliday) holidayDays += 1
-          else regularDays += 1
+          rates.add(rec.rate)
+          if (rec.isWeekend) { weekendDays += 1; weekendPay += rec.amount; wAmt.add(rec.amount) }
+          else if (rec.isOvertime) { overtimeDays += 1; otPay += rec.amount; oAmt.add(rec.amount) }
+          else if (rec.isHoliday) { holidayDays += 1; holidayPay += rec.amount; hAmt.add(rec.amount) }
+          else { regularDays += 1; regularPay += rec.amount; rAmt.add(rec.amount) }
         }
       }
     }
-    return { total, days, weekendDays, overtimeDays, holidayDays, regularDays, leaveDays, leavePay, monthly }
+    const one = s => (s.size === 1 ? [...s][0] : null)
+    return { total, days, weekendDays, overtimeDays, holidayDays, regularDays, leaveDays, leavePay, monthly,
+      regularPay, weekendPay, otPay, holidayPay,
+      regularAmt: one(rAmt), weekendAmt: one(wAmt), otAmt: one(oAmt), holidayAmt: one(hAmt), yearRate: one(rates) }
   }, [attendance, year, realYear, realMonth, startMonthKey])
 
   const todayKey = formatDateKey(new Date())
+
+  // v18 rate periods — the rate in force on a given day (falls back to
+  // current settings while periods are not yet migrated/loaded)
+  const rateForDate = (dateKey) => rateForPeriod(settings.ratePeriods, dateKey, settings)
+
+  // Keep the "current" settings fields in sync with the period in force today
+  // (a future-dated period becomes current the day it starts)
+  useEffect(() => {
+    if (!settings.ratePeriods || !settings.ratePeriods.length) return
+    const r = rateForPeriod(settings.ratePeriods, todayKey, settings)
+    if (r.dailyRate !== settings.dailyRate || r.weekendMultiplier !== settings.weekendMultiplier || r.holidayMultiplier !== settings.holidayMultiplier) {
+      setSettings(s => ({ ...s, dailyRate: r.dailyRate, weekendMultiplier: r.weekendMultiplier, holidayMultiplier: r.holidayMultiplier }))
+    }
+  }, [settings.ratePeriods, todayKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ============================================================
      DayPay motion layer — success feedback (VISUAL ONLY).
@@ -626,14 +691,15 @@ export default function App() {
     const holiday = isHolidayDay(dateObj)
 
     if (isWeekend) {
+      const r = rateForDate(key)
       const wasRecorded = !!attendance[key]
-      const wkndAmount = settings.dailyRate * settings.weekendMultiplier
+      const wkndAmount = r.dailyRate * r.weekendMultiplier
       setAttendance(prev => {
         const next = { ...prev }
         if (next[key]) delete next[key]
         else {
-          const amount = settings.dailyRate * settings.weekendMultiplier
-          next[key] = { date: key, amount, isWeekend: true, isOvertime: false, isHoliday: false, rate: settings.dailyRate, multiplier: settings.weekendMultiplier }
+          const amount = r.dailyRate * r.weekendMultiplier
+          next[key] = { date: key, amount, isWeekend: true, isOvertime: false, isHoliday: false, rate: r.dailyRate, multiplier: r.weekendMultiplier }
         }
         return next
       })
@@ -641,25 +707,27 @@ export default function App() {
       if (!wasRecorded) dpCelebrateSave(key, 'weekend', wkndAmount)
     } else if (holiday) {
       // Holiday - toggle with holiday rate
+      const r = rateForDate(key)
       const wasHolRecorded = !!attendance[key]
-      const holAmount = settings.dailyRate * settings.holidayMultiplier
+      const holAmount = r.dailyRate * r.holidayMultiplier
       setAttendance(prev => {
         const next = { ...prev }
         if (next[key]) delete next[key]
         else {
-          const amount = settings.dailyRate * settings.holidayMultiplier
-          next[key] = { date: key, amount, isWeekend: false, isOvertime: false, isHoliday: true, holidayName: holiday.name, rate: settings.dailyRate, multiplier: settings.holidayMultiplier }
+          const amount = r.dailyRate * r.holidayMultiplier
+          next[key] = { date: key, amount, isWeekend: false, isOvertime: false, isHoliday: true, holidayName: holiday.name, rate: r.dailyRate, multiplier: r.holidayMultiplier }
         }
         return next
       })
       if (!wasHolRecorded) dpCelebrateSave(key, 'holiday', holAmount)
     } else {
       if (!record) {
+        const r = rateForDate(key)
         setAttendance(prev => ({
           ...prev,
-          [key]: { date: key, amount: settings.dailyRate, isWeekend: false, isOvertime: false, isHoliday: false, rate: settings.dailyRate, multiplier: 1 }
+          [key]: { date: key, amount: r.dailyRate, isWeekend: false, isOvertime: false, isHoliday: false, rate: r.dailyRate, multiplier: 1 }
         }))
-        dpCelebrateSave(key, 'work', settings.dailyRate)
+        dpCelebrateSave(key, 'work', r.dailyRate)
       } else {
         setEditingKey(key)
         setEditingDate(dateObj)
@@ -681,44 +749,48 @@ export default function App() {
     if (action === 'remove') {
       setAttendance(prev => { const next = { ...prev }; delete next[key]; return next })
     } else if (action === 'regular') {
+      const r = rateForDate(key)
       setAttendance(prev => {
         const rec = prev[key]
         if (!rec) return prev
-        return { ...prev, [key]: { ...rec, isOvertime: false, isWeekend: false, isHoliday: false, isLeave: false, leaveType: undefined, amount: rec.rate, multiplier: 1, holidayName: undefined } }
+        return { ...prev, [key]: { ...rec, isOvertime: false, isWeekend: false, isHoliday: false, isLeave: false, leaveType: undefined, amount: r.dailyRate, multiplier: 1, holidayName: undefined } }
       })
     } else if (action === 'overtime') {
+      const r = rateForDate(key)
       const oldRec = attendance[key]
       setAttendance(prev => {
         const rec = prev[key]
         if (!rec) return prev
-        const mult = settings.weekendMultiplier
-        return { ...prev, [key]: { ...rec, isOvertime: true, isWeekend: false, isHoliday: false, isLeave: false, leaveType: undefined, amount: rec.rate * mult, multiplier: mult, holidayName: undefined } }
+        const mult = r.weekendMultiplier
+        return { ...prev, [key]: { ...rec, isOvertime: true, isWeekend: false, isHoliday: false, isLeave: false, leaveType: undefined, amount: r.dailyRate * mult, multiplier: mult, holidayName: undefined } }
       })
       // committed → enhanced confirmation with the actual increase
       if (oldRec && !oldRec.isOvertime) {
-        const otDelta = oldRec.rate * settings.weekendMultiplier - oldRec.amount
+        const otDelta = r.dailyRate * r.weekendMultiplier - oldRec.amount
         if (otDelta > 0) dpCelebrateSave(key, 'ot', otDelta)
       }
     } else if (action === 'holiday') {
+      const r = rateForDate(key)
       const oldHol = attendance[key]
       setAttendance(prev => {
         const rec = prev[key]
         if (!rec) return prev
-        const mult = settings.holidayMultiplier
-        return { ...prev, [key]: { ...rec, isHoliday: true, isWeekend: false, isOvertime: false, isLeave: false, leaveType: undefined, amount: rec.rate * mult, multiplier: mult } }
+        const mult = r.holidayMultiplier
+        return { ...prev, [key]: { ...rec, isHoliday: true, isWeekend: false, isOvertime: false, isLeave: false, leaveType: undefined, amount: r.dailyRate * mult, multiplier: mult } }
       })
       if (oldHol && !oldHol.isHoliday) {
-        const holDelta = oldHol.rate * settings.holidayMultiplier - oldHol.amount
+        const holDelta = r.dailyRate * r.holidayMultiplier - oldHol.amount
         if (holDelta > 0) dpCelebrateSave(key, 'holiday', holDelta)
       }
     } else if (action.startsWith('leave-')) {
+      const r = rateForDate(key)
       const leaveType = action.slice(6)
       const lt = ltById(leaveType)
       setAttendance(prev => {
         const rec = prev[key]
         if (!rec) return prev
-        const amount = leavePayFor(lt, rec.rate)
-        return { ...prev, [key]: { ...rec, isOvertime: false, isWeekend: false, isHoliday: false, holidayName: undefined, isLeave: true, leaveType, amount, multiplier: rec.rate > 0 ? Math.round((amount / rec.rate) * 100) / 100 : 0 } }
+        const amount = leavePayFor(lt, r.dailyRate)
+        return { ...prev, [key]: { ...rec, isOvertime: false, isWeekend: false, isHoliday: false, holidayName: undefined, isLeave: true, leaveType, amount, multiplier: r.dailyRate > 0 ? Math.round((amount / r.dailyRate) * 100) / 100 : 0 } }
       })
     }
     setEditingKey(null)
@@ -751,10 +823,33 @@ export default function App() {
   function removeLtDraft(i) { setLtDraft(d => (d || []).filter((_, idx) => idx !== i)) }
   function addLtDraft() { setLtDraft(d => [...(d || []), { id: `lt_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name: '', payMode: 'percent', payValue: 100 }]) }
 
+  // v18 rate-history draft actions (apply on Save, like leave types)
+  function rateFormValid(){
+    if (!rateForm) return false
+    const num = parseInt(rateForm.rate.replace(/[^0-9]/g,''), 10)
+    if (!num || num <= 0) return false
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(rateForm.from)) return false
+    const first = (rateDraft || [])[0]
+    if (first && rateForm.from <= first.from) return false
+    return true
+  }
+  function applyRateForm(){
+    if (!rateFormValid()) return
+    const from = rateForm.from
+    const num = parseInt(rateForm.rate.replace(/[^0-9]/g,''), 10)
+    setRateDraft(prev => {
+      const base = (prev || []).filter(p => p.from !== from)
+      const prevP = base.length ? base[base.length - 1]
+        : { weekendMultiplier: settings.weekendMultiplier, holidayMultiplier: settings.holidayMultiplier }
+      return sortPeriods([...base, { from, dailyRate: num, weekendMultiplier: prevP.weekendMultiplier ?? 2, holidayMultiplier: prevP.holidayMultiplier ?? 2 }])
+    })
+    setRateForm(null)
+  }
+  function removeRateDraft(i){
+    setRateDraft(prev => (prev || []).filter((_, idx) => idx !== i))
+  }
+
   function handleSaveRate(){
-    const cleaned = rateInput.replace(/[^0-9]/g,'')
-    const num = parseInt(cleaned,10)
-    if(!num || num<=0) return
     const goalCleaned = goalInput.replace(/[^0-9]/g,'')
     const goalNum = parseInt(goalCleaned,10) || 0
     const paydayCleaned = paydayInput.replace(/[^0-9]/g,'')
@@ -764,8 +859,10 @@ export default function App() {
     const cleanedTypes = (ltDraft || [])
       .map(t => ({ id: t.id, name: (t.name || '').trim().slice(0, 40), payMode: t.payMode === 'flat' ? 'flat' : 'percent', payValue: Math.max(0, Number(t.payValue) || 0) }))
       .filter(t => t.name)
-    setSettings(s=>({...s, dailyRate:num, salaryGoal: goalNum, paydayDay: paydayNum, ...(ltDraft ? { leaveTypes: cleanedTypes } : {})}))
-    setRateInput(String(num))
+    const periods = (rateDraft && rateDraft.length) ? rateDraft : settings.ratePeriods
+    const rNow = rateForPeriod(periods, todayKey, settings)
+    setSettings(s=>({...s, ratePeriods: periods, dailyRate: rNow.dailyRate, weekendMultiplier: rNow.weekendMultiplier, holidayMultiplier: rNow.holidayMultiplier, salaryGoal: goalNum, paydayDay: paydayNum, ...(ltDraft ? { leaveTypes: cleanedTypes } : {})}))
+    setRateForm(null)
     setGoalInput(String(goalNum))
     setPaydayInput(String(paydayNum))
     setShowSettings(false)
@@ -877,7 +974,7 @@ export default function App() {
     doc.setFont('helvetica','normal')
     doc.setTextColor(100,100,100)
     doc.text(user?.email || 'Local user', 14, 46)
-    doc.text(`Daily Rate: ${formatNaira(settings.dailyRate)} | Weekend/OT/Holiday: ${settings.weekendMultiplier}×`, 14, 52)
+    doc.text(`Daily Rate: ${monthlyStats.days > 0 ? (monthlyStats.monthRate != null ? formatNaira(monthlyStats.monthRate) : 'mixed (rate history)') : formatNaira(rateForDate(`${year}-${String(month + 1).padStart(2, '0')}-01`).dailyRate)} | Weekend/OT/Holiday: ${rateForDate(`${year}-${String(month + 1).padStart(2, '0')}-01`).weekendMultiplier}×`, 14, 52)
     doc.text(`Period: ${getMonthName(month)} ${year} | Status: ${monthStatus.toUpperCase()} ${monthStatus==='locked' ? '(FINAL)' : '(IN PROGRESS)'}`, 14, 58)
 
     // Summary
@@ -902,11 +999,12 @@ export default function App() {
     y+=6
     doc.setFont('helvetica','normal')
     doc.setFontSize(10)
+    const pdfRow = (label, n, pay, amt) => [label, `${n} days`, (amt && n > 0 && n * amt === pay) ? `${n} × ${formatNaira(amt)}` : (n > 0 ? 'mixed rates' : '—'), formatNaira(pay)]
     const rows = [
-      ['Regular', `${monthlyStats.regularDays} days`, `${monthlyStats.regularDays} × ${formatNaira(settings.dailyRate)}`, formatNaira(monthlyStats.regularDays * settings.dailyRate)],
-      ['Weekend 2×', `${monthlyStats.weekendDays} days`, `${monthlyStats.weekendDays} × ${formatNaira(settings.dailyRate*settings.weekendMultiplier)}`, formatNaira(monthlyStats.weekendDays * settings.dailyRate*settings.weekendMultiplier)],
-      ['Overtime OT 2×', `${monthlyStats.overtimeDays} days`, `${monthlyStats.overtimeDays} × ${formatNaira(settings.dailyRate*settings.weekendMultiplier)}`, formatNaira(monthlyStats.overtimeDays * settings.dailyRate*settings.weekendMultiplier)],
-      ['Holiday 2×', `${monthlyStats.holidayDays} days`, `${monthlyStats.holidayDays} × ${formatNaira(settings.dailyRate*settings.holidayMultiplier)}`, formatNaira(monthlyStats.holidayDays * settings.dailyRate*settings.holidayMultiplier)],
+      pdfRow('Regular', monthlyStats.regularDays, monthlyStats.regularPay, monthlyStats.regularAmt),
+      pdfRow('Weekend 2×', monthlyStats.weekendDays, monthlyStats.weekendPay, monthlyStats.weekendAmt),
+      pdfRow('Overtime OT 2×', monthlyStats.overtimeDays, monthlyStats.otPay, monthlyStats.otAmt),
+      pdfRow('Holiday 2×', monthlyStats.holidayDays, monthlyStats.holidayPay, monthlyStats.holidayAmt),
       ['Leave', `${monthlyStats.leaveDays} days`, 'per your leave settings', formatNaira(monthlyStats.leavePay)],
     ]
     rows.forEach(r => {
@@ -979,10 +1077,10 @@ export default function App() {
       `Total: ${formatNaira(monthlyStats.total)}`,
       `${monthlyStats.days} days worked · ${monthlyStats.regularDays} regular · ${monthlyStats.weekendDays} weekend · ${monthlyStats.overtimeDays} OT · ${monthlyStats.holidayDays} holiday · ${monthlyStats.leaveDays} leave`,
     ]
-    if (monthlyStats.regularDays > 0) lines.push(`Regular: ${monthlyStats.regularDays} × ${formatNaira(settings.dailyRate)} = ${formatNaira(monthlyStats.regularDays * settings.dailyRate)}`)
-    if (monthlyStats.weekendDays > 0) lines.push(`Weekend 2×: ${monthlyStats.weekendDays} × ${formatNaira(settings.dailyRate * settings.weekendMultiplier)} = ${formatNaira(monthlyStats.weekendDays * settings.dailyRate * settings.weekendMultiplier)}`)
-    if (monthlyStats.overtimeDays > 0) lines.push(`Overtime: ${monthlyStats.overtimeDays} × ${formatNaira(settings.dailyRate * settings.weekendMultiplier)} = ${formatNaira(monthlyStats.overtimeDays * settings.dailyRate * settings.weekendMultiplier)}`)
-    if (monthlyStats.holidayDays > 0) lines.push(`Holiday 2×: ${monthlyStats.holidayDays} × ${formatNaira(settings.dailyRate * settings.holidayMultiplier)} = ${formatNaira(monthlyStats.holidayDays * settings.dailyRate * settings.holidayMultiplier)}`)
+    if (monthlyStats.regularDays > 0) lines.push(`Regular: ${rateLine(monthlyStats.regularDays, monthlyStats.regularPay, monthlyStats.regularAmt)}`)
+    if (monthlyStats.weekendDays > 0) lines.push(`Weekend 2×: ${rateLine(monthlyStats.weekendDays, monthlyStats.weekendPay, monthlyStats.weekendAmt)}`)
+    if (monthlyStats.overtimeDays > 0) lines.push(`Overtime: ${rateLine(monthlyStats.overtimeDays, monthlyStats.otPay, monthlyStats.otAmt)}`)
+    if (monthlyStats.holidayDays > 0) lines.push(`Holiday 2×: ${rateLine(monthlyStats.holidayDays, monthlyStats.holidayPay, monthlyStats.holidayAmt)}`)
     if (monthlyStats.leaveDays > 0) lines.push(`Leave: ${monthlyStats.leaveDays} day${monthlyStats.leaveDays > 1 ? 's' : ''} · ${formatNaira(monthlyStats.leavePay)}`)
     lines.push(``, `— DayPay · Know what your work is worth.`)
     return lines.join('\n')
@@ -1056,7 +1154,7 @@ export default function App() {
     doc.setFont('helvetica','normal')
     doc.setTextColor(100,100,100)
     doc.text(user?.email || 'Local user', 14, 46)
-    doc.text(`Daily Rate: ${formatNaira(settings.dailyRate)} | Weekend/OT: ${settings.weekendMultiplier}× | Holiday: ${settings.holidayMultiplier}×`, 14, 52)
+    doc.text(`Daily Rate: ${yearlyStats.days > 0 ? (yearlyStats.yearRate != null ? formatNaira(yearlyStats.yearRate) : 'mixed (rate history)') : formatNaira(rateForDate(`${year}-01-01`).dailyRate)} | Weekend/OT: ${rateForDate(`${year}-01-01`).weekendMultiplier}× | Holiday: ${rateForDate(`${year}-01-01`).holidayMultiplier}×`, 14, 52)
     const yearStatus = year === realYear ? 'IN PROGRESS' : 'FINAL'
     doc.text(`Period: January – December ${year} | Status: ${yearStatus}`, 14, 58)
 
@@ -1082,11 +1180,12 @@ export default function App() {
     y += 6
     doc.setFont('helvetica','normal')
     doc.setFontSize(10)
+    const ypdfRow = (label, n, pay, amt) => [label, `${n} days`, (amt && n > 0 && n * amt === pay) ? `${n} × ${formatNaira(amt)}` : (n > 0 ? 'mixed rates' : '—'), formatNaira(pay)]
     const yrows = [
-      ['Regular', `${yearlyStats.regularDays} days`, `${yearlyStats.regularDays} × ${formatNaira(settings.dailyRate)}`, formatNaira(yearlyStats.regularDays * settings.dailyRate)],
-      ['Weekend 2×', `${yearlyStats.weekendDays} days`, `${yearlyStats.weekendDays} × ${formatNaira(settings.dailyRate*settings.weekendMultiplier)}`, formatNaira(yearlyStats.weekendDays * settings.dailyRate*settings.weekendMultiplier)],
-      ['Overtime OT 2×', `${yearlyStats.overtimeDays} days`, `${yearlyStats.overtimeDays} × ${formatNaira(settings.dailyRate*settings.weekendMultiplier)}`, formatNaira(yearlyStats.overtimeDays * settings.dailyRate*settings.weekendMultiplier)],
-      ['Holiday 2×', `${yearlyStats.holidayDays} days`, `${yearlyStats.holidayDays} × ${formatNaira(settings.dailyRate*settings.holidayMultiplier)}`, formatNaira(yearlyStats.holidayDays * settings.dailyRate*settings.holidayMultiplier)],
+      ypdfRow('Regular', yearlyStats.regularDays, yearlyStats.regularPay, yearlyStats.regularAmt),
+      ypdfRow('Weekend 2×', yearlyStats.weekendDays, yearlyStats.weekendPay, yearlyStats.weekendAmt),
+      ypdfRow('Overtime OT 2×', yearlyStats.overtimeDays, yearlyStats.otPay, yearlyStats.otAmt),
+      ypdfRow('Holiday 2×', yearlyStats.holidayDays, yearlyStats.holidayPay, yearlyStats.holidayAmt),
       ['Leave', `${yearlyStats.leaveDays} days`, 'per your leave settings', formatNaira(yearlyStats.leavePay)],
     ]
     yrows.forEach(r => {
@@ -1201,18 +1300,29 @@ export default function App() {
   }
 
   const editingRecord = editingKey ? attendance[editingKey] : null
+  // The rate in force on the day being edited — matches what its buttons will pay
+  const editingRate = editingRecord ? rateForDate(editingRecord.date) : null
+
+  // v18 settings strip: the last locked month's stored total (frozen truth)
+  const prevMonthTotal = useMemo(() => {
+    const pm = new Date(realYear, realMonth - 1, 1)
+    const prefix = `${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, '0')}-`
+    let t = 0
+    for (const k in attendance) if (k.startsWith(prefix)) t += attendance[k].amount
+    return t
+  }, [attendance, realYear, realMonth])
 
   // Salary goal progress
   const goalProgress = settings.salaryGoal > 0 ? Math.min(100, Math.round((monthlyStats.total / settings.salaryGoal) * 100)) : 0
   const goalProgressYear = settings.salaryGoal > 0 ? Math.min(100, Math.round((yearlyStats.total / (settings.salaryGoal * 12)) * 100)) : 0
-  const otExtra = monthlyStats.overtimeDays * settings.dailyRate
-  const weekendExtra = monthlyStats.weekendDays * settings.dailyRate
-  const holidayExtra = monthlyStats.holidayDays * settings.dailyRate
+  const otExtra = monthlyStats.otExtra
+  const weekendExtra = monthlyStats.weekendExtra
+  const holidayExtra = monthlyStats.holidayExtra
   const totalExtra = otExtra + weekendExtra + holidayExtra
 
   // Payday countdown + month-end projection (active month only).
   // Projection assumes all remaining Mon–Fri (excl. public holidays and
-  // already-logged days) are worked at the current daily rate.
+  // already-logged days) are worked — each at the rate in force on that day.
   const paydayInfo = useMemo(() => {
     const dim = new Date(year, month + 1, 0).getDate()
     const pDay = settings.paydayDay > 0 ? Math.min(settings.paydayDay, dim) : dim
@@ -1221,18 +1331,23 @@ export default function App() {
     const viewStart = new Date(year, month, 1)
     const from = todayMid > viewStart ? todayMid : viewStart
     const end = new Date(year, month, dim)
-    let remainingWeekdays = 0
+    let remainingWeekdays = 0, projectedRemaining = 0, nextRate = null, ratesMixed = false
     for (let d = new Date(from); d <= end; d.setDate(d.getDate() + 1)) {
       const dow = d.getDay()
       if (dow === 0 || dow === 6) continue
       if (isHolidayDay(d)) continue
-      if (attendance[formatDateKey(d)]) continue
+      const dk = formatDateKey(d)
+      if (attendance[dk]) continue
       remainingWeekdays += 1
+      const dayRate = rateForPeriod(settings.ratePeriods, dk, settings).dailyRate
+      projectedRemaining += dayRate
+      if (nextRate == null) nextRate = dayRate
+      else if (dayRate !== nextRate) ratesMixed = true
     }
     const daysToPayday = Math.round((paydayDate - todayMid) / 86400000)
-    const projectedTotal = monthlyStats.total + remainingWeekdays * settings.dailyRate
-    return { paydayDay: pDay, paydayDate, daysToPayday, remainingWeekdays, projectedTotal }
-  }, [year, month, realCurrentDate, settings.paydayDay, settings.dailyRate, monthlyStats.total, attendance, holidaysMap])
+    const projectedTotal = monthlyStats.total + projectedRemaining
+    return { paydayDay: pDay, paydayDate, daysToPayday, remainingWeekdays, projectedTotal, nextRate, ratesMixed }
+  }, [year, month, realCurrentDate, settings.paydayDay, settings.ratePeriods, settings.dailyRate, monthlyStats.total, attendance, holidaysMap])
 
   return (
     <div className="app-root">
@@ -1547,7 +1662,7 @@ export default function App() {
                       </div>
                     </div>
                     <div className="payday-hint">
-                      Payday {getMonthName(month, true)} {paydayInfo.paydayDay} · {paydayInfo.remainingWeekdays} weekday{paydayInfo.remainingWeekdays!==1?'s':''} left · at {formatNaira(settings.dailyRate)}/day
+                      Payday {getMonthName(month, true)} {paydayInfo.paydayDay} · {paydayInfo.remainingWeekdays} weekday{paydayInfo.remainingWeekdays!==1?'s':''} left · at {paydayInfo.ratesMixed ? 'mixed rates' : `${formatNaira(paydayInfo.nextRate ?? settings.dailyRate)}/day`}
                     </div>
                   </div>
                 )}
@@ -1584,10 +1699,10 @@ export default function App() {
               </div>
               <div className="summary-divider" />
               <div className="summary-rows">
-                <div className="summary-row"><span>Regular <span className="mini-stamp ok">OK</span></span><span className="mono">{monthlyStats.regularDays} × {formatNaira(settings.dailyRate)}</span></div>
-                <div className="summary-row"><span>Weekend <span className="mini-stamp x2">2×</span></span><span className="mono">{monthlyStats.weekendDays} × {formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span></div>
-                <div className="summary-row"><span>Overtime <span className="mini-stamp ot">OT 2×</span></span><span className="mono">{monthlyStats.overtimeDays} × {formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span></div>
-                <div className="summary-row"><span>Holiday <span className="mini-stamp hol">HOL 2×</span></span><span className="mono">{monthlyStats.holidayDays} × {formatNaira(settings.dailyRate*settings.holidayMultiplier)}</span></div>
+                <div className="summary-row"><span>Regular <span className="mini-stamp ok">OK</span></span><span className="mono">{monthlyStats.regularAmt ? `${monthlyStats.regularDays} × ${formatNaira(monthlyStats.regularAmt)}` : `${monthlyStats.regularDays}d · mixed`}</span></div>
+                <div className="summary-row"><span>Weekend <span className="mini-stamp x2">2×</span></span><span className="mono">{monthlyStats.weekendAmt ? `${monthlyStats.weekendDays} × ${formatNaira(monthlyStats.weekendAmt)}` : `${monthlyStats.weekendDays}d · mixed`}</span></div>
+                <div className="summary-row"><span>Overtime <span className="mini-stamp ot">OT 2×</span></span><span className="mono">{monthlyStats.otAmt ? `${monthlyStats.overtimeDays} × ${formatNaira(monthlyStats.otAmt)}` : `${monthlyStats.overtimeDays}d · mixed`}</span></div>
+                <div className="summary-row"><span>Holiday <span className="mini-stamp hol">HOL 2×</span></span><span className="mono">{monthlyStats.holidayAmt ? `${monthlyStats.holidayDays} × ${formatNaira(monthlyStats.holidayAmt)}` : `${monthlyStats.holidayDays}d · mixed`}</span></div>
                 <div className="summary-row"><span>Leave <span className="mini-stamp lv">LV</span></span><span className="mono">{monthlyStats.leaveDays}d · {formatNaira(monthlyStats.leavePay)}</span></div>
                 <div className="summary-row" style={{marginTop:4, paddingTop:10, borderTop:'1px dashed var(--border)'}}><span><strong>Monthly {monthStatus==='locked'?'Final Salary':'Total'}</strong></span><span className="mono" style={{fontWeight:800, color:'var(--daypay-green)', fontSize:'14px'}}>{formatNaira(monthlyStats.total)}</span></div>
               </div>
@@ -1792,19 +1907,19 @@ export default function App() {
                   <div style={{marginTop:16, display:'flex', flexDirection:'column', gap:10}}>
                     <button className={`ot-option ${!editingRecord.isWeekend && !editingRecord.isOvertime && !editingRecord.isHoliday && !editingRecord.isLeave ? 'selected' : ''}`} onClick={()=>handleOvertimeAction('regular')}>
                       <span className="ot-opt-left"><span className="mini-stamp ok">OK</span> Regular</span>
-                      <span className="mono">{formatNaira(editingRecord.rate)}</span>
+                      <span className="mono">{formatNaira(editingRate.dailyRate)}</span>
                     </button>
                     <button className={`ot-option ${editingRecord.isOvertime ? 'selected' : ''}`} onClick={()=>handleOvertimeAction('overtime')}>
                       <span className="ot-opt-left"><span className="mini-stamp ot">OT</span> Overtime 2×</span>
-                      <span className="mono">{formatNaira(editingRecord.rate * settings.weekendMultiplier)}</span>
+                      <span className="mono">{formatNaira(editingRate.dailyRate * editingRate.weekendMultiplier)}</span>
                     </button>
                     <button className={`ot-option ${editingRecord.isHoliday ? 'selected' : ''}`} onClick={()=>handleOvertimeAction('holiday')}>
                       <span className="ot-opt-left"><span className="mini-stamp hol">HOL</span> Holiday 2×</span>
-                      <span className="mono">{formatNaira(editingRecord.rate * settings.holidayMultiplier)}</span>
+                      <span className="mono">{formatNaira(editingRate.dailyRate * editingRate.holidayMultiplier)}</span>
                     </button>
                     {leaveTypes.length > 0 && <div className="leave-divider">Mark as leave</div>}
                     {leaveTypes.map(t => {
-                      const pay = leavePayFor(t, editingRecord.rate)
+                      const pay = leavePayFor(t, editingRate.dailyRate)
                       const initials = (t.name || 'LV').replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || 'LV'
                       return (
                         <button key={t.id} className={`ot-option ${editingRecord.isLeave && editingRecord.leaveType===t.id ? 'selected' : ''}`} onClick={()=>handleOvertimeAction(`leave-${t.id}`)}>
@@ -1877,13 +1992,51 @@ export default function App() {
 
             <div className="sp-section-label">Earnings</div>
             <div className="sp-card">
-              <div className="sp-row">
-                <span className="sp-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="2" y="6" width="20" height="12" rx="2.5"/><circle cx="12" cy="12" r="2.6"/><path d="M6 12h.01M18 12h.01"/></svg></span>
-                <span className="sp-row-main">
+              <div className="sp-rh">
+                <div className="sp-rh-head">
                   <span className="sp-row-title">Daily rate</span>
-                  <span className="sp-row-sub">Base pay per work day</span>
-                </span>
-                <span className="sp-input-wrap"><span className="sp-input-prefix">₦</span><input className="sp-input" value={rateInput} onChange={e=>setRateInput(e.target.value.replace(/[^0-9,]/g,''))} inputMode="numeric" placeholder="16000" /></span>
+                  <span className="sp-row-sub">A new rate applies to days logged from its start date — locked months never change</span>
+                </div>
+                {(rateDraft || []).map((p, i) => (
+                  <div className={`sp-rh-row${p.from > todayKey ? ' future' : ''}`} key={p.from}>
+                    <div className="sp-rh-main">
+                      <span className="sp-rh-rate">{formatNaira(p.dailyRate)}<em> / day</em></span>
+                      <span className="sp-rh-sub">weekend ×{p.weekendMultiplier} · holiday ×{p.holidayMultiplier} · {i === 0 ? 'since' : 'from'} {shortDate(p.from)}</span>
+                    </div>
+                    {i === (rateDraft || []).length - 1 && p.from <= todayKey && <span className="sp-rh-pill">current</span>}
+                    {p.from > todayKey && <span className="sp-rh-pill soon">starts {shortDate(p.from)}</span>}
+                    {i > 0 && (
+                      <button type="button" className="sp-rh-del" onClick={()=>removeRateDraft(i)} title="Remove this rate change" aria-label="Remove this rate change">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {rateForm ? (
+                  <div className="sp-rh-form">
+                    <div className="sp-rh-frow">
+                      <span className="sp-rh-flabel">From</span>
+                      <input type="date" className="sp-rh-fdate" value={rateForm.from} onChange={e=>setRateForm(f => (f ? { ...f, from: e.target.value } : f))} aria-label="Rate change starts on" />
+                    </div>
+                    <div className="sp-rh-frow">
+                      <span className="sp-rh-flabel">New daily rate</span>
+                      <span className="sp-input-wrap sp-rh-frate"><span className="sp-input-prefix">₦</span><input className="sp-input" value={rateForm.rate} onChange={e=>setRateForm(f => (f ? { ...f, rate: e.target.value.replace(/[^0-9,]/g, '') } : f))} inputMode="numeric" placeholder="18000" aria-label="New daily rate" /></span>
+                    </div>
+                    <div className="sp-rh-factions">
+                      <button type="button" className="sp-rh-cancel" onClick={()=>setRateForm(null)}>Cancel</button>
+                      <button type="button" className="btn-primary sp-rh-apply" onClick={applyRateForm} disabled={!rateFormValid()}>Add rate change</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button type="button" className="sp-rh-add" onClick={()=>setRateForm({ from: todayKey, rate: '' })}>+ Add rate change</button>
+                )}
+                <div className="sp-rh-truth">
+                  {prevMonthTotal > 0 && <span className="sp-rh-chip">🔒 {getMonthName(realMonth === 0 ? 11 : realMonth - 1, true)} · {formatNaira(prevMonthTotal)} · frozen</span>}
+                  <span className="sp-rh-chip">Now · {formatNaira(rateForPeriod(rateDraft || [], todayKey, settings).dailyRate)}/day</span>
+                  {(rateDraft || []).filter(p => p.from > todayKey).slice(0, 1).map(p => (
+                    <span className="sp-rh-chip hi" key={p.from}>{shortDate(p.from)} → {formatNaira(p.dailyRate)}</span>
+                  ))}
+                </div>
               </div>
               <div className="sp-row">
                 <span className="sp-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></svg></span>
