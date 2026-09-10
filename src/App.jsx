@@ -710,6 +710,7 @@ export default function App() {
   const dpToastTimer = useRef(null)
   const [dpJust, setDpJust] = useState(null)
   const dpJustTimer = useRef(null)
+  const [dpQuietSay, setDpQuietSay] = useState(null) // v19-A: SR-only announcement for quiet saves
 
   function dpShowToast(toast) {
     if (dpToastTimer.current) clearTimeout(dpToastTimer.current)
@@ -724,7 +725,9 @@ export default function App() {
     if (kind === 'weekend') dpShowToast({ variant: 'weekend', title: 'Weekend OT!', sub: `${formatNaira(amount)} added` })
     else if (kind === 'ot') dpShowToast({ variant: 'ot', title: 'OT recorded', sub: `${formatNaira(amount)} added` })
     else if (kind === 'holiday') dpShowToast({ variant: 'holiday', title: 'Holiday OT', sub: `${formatNaira(amount)} added` })
-    else dpShowToast({ variant: 'work', title: 'Work recorded' })
+    // v19-A quiet workdays: plain work and leave saves pop the cell only — no card.
+    // Screen-reader parity: a visually-hidden live region still says what happened.
+    else setDpQuietSay({ id: Date.now(), text: kind === 'leave' ? 'Leave recorded' : 'Work recorded' })
   }
 
   /* Month / year completion — recognizes an EXISTING event only:
@@ -866,12 +869,15 @@ export default function App() {
       const r = rateForDate(key)
       const leaveType = action.slice(6)
       const lt = ltById(leaveType)
+      const lvAmount = leavePayFor(lt, r.dailyRate)
       setAttendance(prev => {
         const rec = prev[key]
         if (!rec) return prev
         const amount = leavePayFor(lt, r.dailyRate)
         return { ...prev, [key]: { ...rec, isOvertime: false, isWeekend: false, isHoliday: false, holidayName: undefined, isLeave: true, leaveType, amount, multiplier: r.dailyRate > 0 ? Math.round((amount / r.dailyRate) * 100) / 100 : 0 } }
       })
+      // v19-A: leave saves get the same quiet cell pop as plain workdays
+      dpCelebrateSave(key, 'leave', lvAmount)
     }
     setEditingKey(null)
     setEditingDate(null)
@@ -1456,6 +1462,11 @@ export default function App() {
             <span className="dp-toast-sparks" aria-hidden="true"><i /><i /><i /></span>
           )}
         </div>
+      )}
+
+      {/* v19-A: quiet saves — visually-hidden confirmation for screen readers */}
+      {dpQuietSay && (
+        <div className="sr-only" role="status" aria-live="polite" key={dpQuietSay.id}>{dpQuietSay.text}</div>
       )}
 
       {showSplash && (

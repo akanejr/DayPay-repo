@@ -1536,3 +1536,6 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .sp-export-btn.ghost { background: transparent; border-color: var(--border); color: var(--text-2); }
 .sp-export-btn.ghost:hover { background: var(--bg-cell-hover); color: var(--text); }
 .sp-export .sp-hint { margin: 0; }
+
+/* ===== v19-A: quiet workdays — SR-only announcement (no visual footprint) ===== */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
