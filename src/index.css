@@ -1509,3 +1509,17 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   [data-glass="on"][data-theme="dark"] .sp-rh-row { background: rgba(255,255,255,.045); }
   [data-glass="on"][data-theme="light"] .sp-rh-row { background: rgba(255,255,255,.5); }
 }
+
+/* ===== v18: "Choose theme" inline picker (hamburger menu) ===== */
+.hamburger-item .hamburger-chev { margin-left: auto; font-size: 11px; color: var(--text-3); transition: transform 0.15s ease; }
+.hamburger-item .hamburger-chev.open { transform: rotate(90deg); }
+.theme-picker { display: flex; flex-direction: column; gap: 4px; margin: 2px 0 6px; padding: 6px; background: var(--bg-elevated-2); border-radius: 10px; }
+.theme-opt { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: transparent; color: var(--text-2); font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 8px 10px; border-radius: 8px; cursor: pointer; text-align: left; transition: background 0.13s, color 0.13s; }
+.theme-opt:hover { background: var(--bg-cell-hover); color: var(--text); }
+.theme-opt.on { color: var(--green-ink); background: var(--green-wash); font-weight: 700; }
+.theme-sw { width: 20px; height: 20px; border-radius: 6px; border: 1px solid var(--border); flex: none; }
+.theme-sw.sw-light { background: linear-gradient(180deg, #FFFFFF 55%, #F2F8F4 100%); }
+.theme-sw.sw-dark { background: linear-gradient(180deg, #0C1425 55%, #080C16 100%); }
+.theme-sw.sw-glass-dark { background: radial-gradient(120% 90% at 85% -10%, rgba(34,222,94,.45), transparent 55%), radial-gradient(130% 100% at -10% 110%, rgba(30,64,110,.65), transparent 60%), #080C16; border-color: rgba(255,255,255,.3); }
+.theme-sw.sw-glass-light { background: radial-gradient(95% 75% at 92% -6%, rgba(21,128,61,.14), transparent 60%), linear-gradient(180deg, #FFFFFF, #F2F8F4); }
+.theme-check { margin-left: auto; color: var(--green-ink); font-weight: 800; }

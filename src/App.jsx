@@ -33,6 +33,13 @@ function shortDate(key) {
   const d = new Date(`${key}T00:00:00`)
   return isNaN(d) ? key : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }
+// v18 appearance modes — shown in the hamburger "Choose theme" picker and Settings
+const THEME_OPTIONS = [
+  { id: 'light', label: 'Light', sw: 'sw-light' },
+  { id: 'dark', label: 'Dark', sw: 'sw-dark' },
+  { id: 'glass-dark', label: 'Glass · Dark', sw: 'sw-glass-dark' },
+  { id: 'glass-light', label: 'Glass · Light', sw: 'sw-glass-light' },
+]
 function getMonthName(monthIndex, short = false) {
   const names = short
     ? ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
@@ -200,6 +207,7 @@ export default function App() {
   const [editingDate, setEditingDate] = useState(null)
 
   const [showHamburgerMenu, setShowHamburgerMenu] = useState(false)
+  const [showThemeMenu, setShowThemeMenu] = useState(false) // v18: "Choose theme" inline picker in the hamburger menu
   const hamburgerMenuRef = useRef(null)
 
   const [showShareMenu, setShowShareMenu] = useState(false)
@@ -301,13 +309,12 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (!showHamburgerMenu) { setShowThemeMenu(false); return }
     const handleClickOutside = (e) => {
       if (hamburgerMenuRef.current && !hamburgerMenuRef.current.contains(e.target)) setShowHamburgerMenu(false)
     }
-    if (showHamburgerMenu) {
-      document.addEventListener('mousedown', handleClickOutside)
-      return () => document.removeEventListener('mousedown', handleClickOutside)
-    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showHamburgerMenu])
 
   useEffect(() => {
@@ -1458,18 +1465,24 @@ export default function App() {
                     </div>
                   </div>
                 )}
-                <button className="hamburger-item" onClick={()=>{setTheme(theme==='light' ? 'dark' : theme==='dark' ? 'glass-dark' : theme==='glass-dark' ? 'glass-light' : 'light'); setShowHamburgerMenu(false)}}>
+                <button className="hamburger-item" onClick={()=>setShowThemeMenu(v=>!v)} aria-expanded={showThemeMenu}>
                   <span className="hamburger-icon">
-                    {theme==='light' ? (
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3a6 6 0 0 0 9 9c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9Z"/></svg>
-                    ) : theme==='dark' || theme==='glass-dark' ? (
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z"/><path d="M19 15l.7 1.8 1.8.7-1.8.7L19 19.7l-.7-1.8-1.8-.7 1.8-.7L19 15Z"/></svg>
-                    ) : (
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>
-                    )}
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z"/><path d="M19 15l.7 1.8 1.8.7-1.8.7L19 19.7l-.7-1.8-1.8-.7 1.8-.7L19 15Z"/></svg>
                   </span>
-                  <span>{theme==='light' ? 'Dark mode' : theme==='dark' ? 'Glass mode' : theme==='glass-dark' ? 'Glass · Light' : 'Light mode'}</span>
+                  <span>Choose theme</span>
+                  <span className={`hamburger-chev${showThemeMenu ? ' open' : ''}`} aria-hidden="true">▸</span>
                 </button>
+                {showThemeMenu && (
+                  <div className="theme-picker">
+                    {THEME_OPTIONS.map(opt => (
+                      <button type="button" key={opt.id} data-opt={opt.id} className={`theme-opt${theme===opt.id ? ' on' : ''}`} onClick={()=>setTheme(opt.id)} aria-pressed={theme===opt.id}>
+                        <span className={`theme-sw ${opt.sw}`} aria-hidden="true" />
+                        <span>{opt.label}</span>
+                        {theme===opt.id && <span className="theme-check" aria-hidden="true">✓</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {isSupabaseConfigured && (
                   user ? (
                     <button className="hamburger-item" onClick={()=>{handleLogout(); setShowHamburgerMenu(false)}}>
