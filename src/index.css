@@ -1426,3 +1426,13 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .sp-rh-truth { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 2px; }
 .sp-rh-chip { font-size: 10.5px; font-weight: 600; color: var(--text-2); border: 1px solid var(--border); border-radius: 999px; padding: 4px 9px; background: var(--bg); }
 .sp-rh-chip.hi { color: var(--green-ink); border-color: var(--green-ink); background: var(--green-wash); }
+
+/* ===== v18: Settings tidy — collapsible sections ===== */
+.sp-fold { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 11px 13px; cursor: pointer; font-family: inherit; text-align: left; }
+.sp-fold-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sp-fold-title { font-size: 13px; font-weight: 800; color: var(--text); }
+.sp-fold-sum { font-size: 11.5px; color: var(--text-3); }
+.sp-fold-chev { flex: none; color: var(--text-3); font-size: 12px; transition: transform .16s ease; }
+.sp-fold-chev.open { transform: rotate(90deg); }
+.sp-fold-body { margin-top: 8px; }
+.sp-fold-body .sp-notes { margin-top: 10px; }

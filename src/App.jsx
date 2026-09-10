@@ -152,6 +152,7 @@ export default function App() {
   const [paydayInput, setPaydayInput] = useState('0')
   const [rateDraft, setRateDraft] = useState(null) // draft rate periods while Settings is open (applied on Save)
   const [rateForm, setRateForm] = useState(null)   // { from, rate } — the "Add rate change" inline form
+  const [spFold, setSpFold] = useState({ pay: false, track: false }) // v18 settings tidy: collapsed sections
   const [ltDraft, setLtDraft] = useState(null)
   const [loaded, setLoaded] = useState(false)
 
@@ -335,6 +336,7 @@ export default function App() {
       const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
       setRateDraft(migratePeriods(settings.ratePeriods, s, earliest, monthStart))
       setRateForm(null)
+      setSpFold({ pay: false, track: false })
     }
   }, [showSettings]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -2074,33 +2076,48 @@ export default function App() {
                 <button type="button" className="lt-add" onClick={addLtDraft}>+ Add leave type</button>
               </div>
             </div>
-            <p className="sp-hint"><strong>%</strong> = share of your daily rate (50 = half pay) · <strong>₦</strong> = flat amount per day. Already-logged days keep their original amounts.</p>
+            <p className="sp-hint"><strong>%</strong> of daily rate (50 = half pay) · <strong>₦</strong> flat per day · logged days keep their amounts.</p>
 
-            <div className="sp-section-label">Your pay rates</div>
-            <div className="sp-card">
-              <div className="sp-kv"><span>Regular (OK)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate)}</span></div>
-              <div className="sp-kv"><span>Weekend (2×)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span></div>
-              <div className="sp-kv"><span>Overtime (OT 2×)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span></div>
-              <div className="sp-kv"><span>Holiday (HOL 2×)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate*settings.holidayMultiplier)}</span></div>
-              {leaveTypes.map(t => (
-                <div className="sp-kv" key={`ib-${t.id}`}><span>{t.name}</span><span className="sp-kv-val">{t.payMode!=='flat' ? `${t.payValue}% · ` : ''}{formatNaira(leavePayFor(t, settings.dailyRate))}</span></div>
-              ))}
-              <div className="sp-kv"><span>Payday</span><span className="sp-kv-val">{settings.paydayDay > 0 ? `Day ${ordDay(settings.paydayDay)}` : 'Last day of month'}</span></div>
-            </div>
-            <p className="sp-hint">Weekdays: OK → edit to OT · Weekends auto 2× · Holidays auto HOL 2× (Nigeria).</p>
+            <button type="button" className="sp-fold" onClick={()=>setSpFold(f=>({...f, pay:!f.pay}))} aria-expanded={spFold.pay}>
+              <span className="sp-fold-main">
+                <span className="sp-fold-title">Your pay rates</span>
+                <span className="sp-fold-sum">Regular {formatNaira(settings.dailyRate)} · 2× {formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span>
+              </span>
+              <span className={`sp-fold-chev${spFold.pay ? ' open' : ''}`} aria-hidden="true">▸</span>
+            </button>
+            {spFold.pay && (
+              <div className="sp-card sp-fold-body">
+                <div className="sp-kv"><span>Regular (OK)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate)}</span></div>
+                <div className="sp-kv"><span>Weekend (2×)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span></div>
+                <div className="sp-kv"><span>Overtime (OT 2×)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span></div>
+                <div className="sp-kv"><span>Holiday (HOL 2×)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate*settings.holidayMultiplier)}</span></div>
+                {leaveTypes.map(t => (
+                  <div className="sp-kv" key={`ib-${t.id}`}><span>{t.name}</span><span className="sp-kv-val">{t.payMode!=='flat' ? `${t.payValue}% · ` : ''}{formatNaira(leavePayFor(t, settings.dailyRate))}</span></div>
+                ))}
+                <p className="sp-hint">Weekdays: OK → edit to OT · Weekends auto 2× · Holidays auto HOL 2× (Nigeria).</p>
+              </div>
+            )}
 
-            <div className="sp-section-label">Tracking</div>
-            <div className="sp-card">
-              <div className="sp-kv"><span>Current month</span><span className="sp-kv-val">{getMonthName(realMonth)} {realYear} · Active</span></div>
-              <div className="sp-kv"><span>Tracking started</span><span className="sp-kv-val">{startMonthKey || 'Not set'}</span></div>
-              <div className="sp-kv"><span>Cloud sync</span><span className="sp-kv-val" style={{color: isSupabaseConfigured ? 'var(--green-ink)' : 'var(--danger)'}}>{isSupabaseConfigured ? (user ? 'Connected' : 'Ready — sign in') : 'Not configured'}</span></div>
-            </div>
-            <div className="sp-notes">
-              <span>• Only the current month is editable</span>
-              <span>• Previous months lock with final salary preserved</span>
-              <span>• Holidays auto-detected (Nigeria) with HOL stamp</span>
-              <span>• PWA: installable, offline-ready</span>
-            </div>
+            <button type="button" className="sp-fold" onClick={()=>setSpFold(f=>({...f, track:!f.track}))} aria-expanded={spFold.track}>
+              <span className="sp-fold-main">
+                <span className="sp-fold-title">Tracking</span>
+                <span className="sp-fold-sum">{getMonthName(realMonth, true)} {realYear} · {isSupabaseConfigured ? (user ? 'Synced' : 'Sync ready — sign in') : 'Local only'}</span>
+              </span>
+              <span className={`sp-fold-chev${spFold.track ? ' open' : ''}`} aria-hidden="true">▸</span>
+            </button>
+            {spFold.track && (
+              <div className="sp-card sp-fold-body">
+                <div className="sp-kv"><span>Current month</span><span className="sp-kv-val">{getMonthName(realMonth)} {realYear} · Active</span></div>
+                <div className="sp-kv"><span>Tracking started</span><span className="sp-kv-val">{startMonthKey || 'Not set'}</span></div>
+                <div className="sp-kv"><span>Cloud sync</span><span className="sp-kv-val" style={{color: isSupabaseConfigured ? 'var(--green-ink)' : 'var(--danger)'}}>{isSupabaseConfigured ? (user ? 'Connected' : 'Ready — sign in') : 'Not configured'}</span></div>
+                <div className="sp-notes">
+                  <span>• Only the current month is editable</span>
+                  <span>• Previous months lock with final salary preserved</span>
+                  <span>• Holidays auto-detected (Nigeria) with HOL stamp</span>
+                  <span>• PWA: installable, offline-ready</span>
+                </div>
+              </div>
+            )}
 
             <div className="sp-storage">DayPay — Know what your work is worth. {isSupabaseConfigured && user ? `Synced for ${displayName || user.email}.` : 'Local.'} PWA ready. © 2026 Akaninyene — All rights reserved.</div>
           </div>
