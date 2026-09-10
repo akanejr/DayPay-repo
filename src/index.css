@@ -1316,46 +1316,48 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   100%    { border-color: var(--amber); }
 }
 
-/* 6 · Success toasts — compact, safe-area aware, never blocking */
+/* 6 · Success cards — drop in under the header, never covering the calendar */
 .dp-toast {
-  position: fixed; left: 50%;
-  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
-  transform: translateX(-50%); z-index: 9500;
-  display: flex; align-items: center; gap: 11px;
-  max-width: min(86vw, 330px);
-  padding: 10px 16px; border-radius: 14px;
+  position: fixed;
+  top: calc(64px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(calc(100vw - 24px), 456px);
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 18px; border-radius: 16px;
   background: #0B1B32; color: #fff;
-  box-shadow: 0 10px 28px rgba(11,27,50,0.30), inset 0 0 0 1px rgba(255,255,255,0.07);
+  box-shadow: 0 14px 34px rgba(11,27,50,0.34), inset 0 0 0 1px rgba(255,255,255,0.08);
   font-family: 'Manrope', -apple-system, sans-serif;
   pointer-events: none;
+  z-index: 9500;
   animation: dpToastLife 2600ms cubic-bezier(0.16,1,0.3,1) forwards;
 }
-.dp-toast-weekend { animation-duration: 3000ms; padding: 12px 18px; }
-.dp-toast-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.dp-toast strong { font-size: 14px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.2; }
-.dp-toast em { font-style: normal; font-size: 12.5px; line-height: 1.25; color: #4ADE80; font-variant-numeric: tabular-nums; }
-.dp-toast-weekend strong { color: #4ADE80; }
-.dp-toast-month strong, .dp-toast-year strong { font-size: 15px; }
+.dp-toast-weekend { animation-duration: 3000ms; padding: 15px 20px; }
+.dp-toast-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dp-toast strong { font-size: 16px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.15; }
+.dp-toast em { font-style: normal; font-size: 13px; line-height: 1.25; color: #4ADE80; font-variant-numeric: tabular-nums; }
+.dp-toast-weekend strong { color: #4ADE80; font-size: 17px; }
+.dp-toast-month strong, .dp-toast-year strong { font-size: 17px; }
 @keyframes dpToastLife {
-  0%   { opacity: 0; transform: translateX(-50%) translateY(14px) scale(0.96); }
+  0%   { opacity: 0; transform: translateX(-50%) translateY(-10px) scale(0.97); }
   8%   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
   90%  { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
-  100% { opacity: 0; transform: translateX(-50%) translateY(6px); }
+  100% { opacity: 0; transform: translateX(-50%) translateY(-8px) scale(0.98); }
 }
 
 /* single green slip — simple confirmations (work / OT / holiday / month / year) */
-.dp-toast-slip { width: 10px; height: 10px; border-radius: 3px; flex: none; background: #16A34A; }
+.dp-toast-slip { width: 12px; height: 12px; border-radius: 3.5px; flex: none; background: #16A34A; }
 
 /* two-slip Peeking Slip glyph — weekend OT only */
-.dp-toast-slips { position: relative; width: 20px; height: 20px; flex: none; }
+.dp-toast-slips { position: relative; width: 26px; height: 26px; flex: none; }
 .dp-toast-slips::before {
   content: ''; position: absolute; right: 1px; bottom: 1px;
-  width: 12px; height: 12px; border-radius: 3.5px; background: #16A34A;
+  width: 16px; height: 16px; border-radius: 4.5px; background: #16A34A;
   animation: dpSlipPeek 0.5s cubic-bezier(0.16,1,0.3,1) 0.12s backwards;
 }
 .dp-toast-slips::after {
   content: ''; position: absolute; left: 1px; top: 1px;
-  width: 12px; height: 12px; border-radius: 3.5px; border: 2px solid #fff;
+  width: 16px; height: 16px; border-radius: 4.5px; border: 2.5px solid #fff;
 }
 @keyframes dpSlipPeek {
   from { transform: translate(6px, 6px); }
