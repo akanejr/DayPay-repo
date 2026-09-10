@@ -153,6 +153,7 @@ export default function App() {
   const [rateDraft, setRateDraft] = useState(null) // draft rate periods while Settings is open (applied on Save)
   const [rateForm, setRateForm] = useState(null)   // { from, rate } — the "Add rate change" inline form
   const [spFold, setSpFold] = useState({ pay: false, track: false }) // v18 settings tidy: collapsed sections
+  const [sumFold, setSumFold] = useState(false) // v18 month page: details collapsed by default
   const [ltDraft, setLtDraft] = useState(null)
   const [loaded, setLoaded] = useState(false)
 
@@ -1650,6 +1651,21 @@ export default function App() {
                   {displayName ? `${displayName} · ` : ''}{monthlyStats.days} day{monthlyStats.days!==1?'s':''} worked{monthlyStats.leaveDays>0 ? `, ${monthlyStats.leaveDays} on leave` : ''} {monthStatus==='locked' ? '· Locked' : monthStatus==='active' ? '· Editable' : ''} {isSupabaseConfigured && user && <span className="cloud-hint">· cloud synced</span>}
                 </div>
 
+                {/* v18: read-only details collapsed by default — calendar closer to the top */}
+                <button type="button" className="dp-fold" onClick={()=>setSumFold(v=>!v)} aria-expanded={sumFold}>
+                  <span className="dp-fold-main">
+                    <span className="dp-fold-title">Details</span>
+                    <span className="dp-fold-sum">
+                      {monthStatus==='active'
+                        ? `Projected ${formatNaira(paydayInfo.projectedTotal)} · ${paydayInfo.daysToPayday > 0 ? `${paydayInfo.daysToPayday}d to payday` : paydayInfo.daysToPayday === 0 ? 'payday today 🎉' : 'payday passed'}`
+                        : `${monthlyStats.days} day${monthlyStats.days!==1?'s':''} worked`}
+                      {settings.salaryGoal > 0 ? ` · ${goalProgress}% of goal` : ''}
+                    </span>
+                  </span>
+                  <span className={`dp-fold-chev${sumFold ? ' open' : ''}`} aria-hidden="true">▸</span>
+                </button>
+
+                {sumFold && (<>
                 {/* Payday countdown + projection (active month only) */}
                 {monthStatus==='active' && (
                   <div className="payday-panel">
@@ -1698,7 +1714,9 @@ export default function App() {
                     </div>
                   </div>
                 )}
+                </>)}
               </div>
+              {sumFold && (<>
               <div className="summary-divider" />
               <div className="summary-rows">
                 <div className="summary-row"><span>Regular <span className="mini-stamp ok">OK</span></span><span className="mono">{monthlyStats.regularAmt ? `${monthlyStats.regularDays} × ${formatNaira(monthlyStats.regularAmt)}` : `${monthlyStats.regularDays}d · mixed`}</span></div>
@@ -1708,6 +1726,7 @@ export default function App() {
                 <div className="summary-row"><span>Leave <span className="mini-stamp lv">LV</span></span><span className="mono">{monthlyStats.leaveDays}d · {formatNaira(monthlyStats.leavePay)}</span></div>
                 <div className="summary-row" style={{marginTop:4, paddingTop:10, borderTop:'1px dashed var(--border)'}}><span><strong>Monthly {monthStatus==='locked'?'Final Salary':'Total'}</strong></span><span className="mono" style={{fontWeight:800, color:'var(--daypay-green)', fontSize:'14px'}}>{formatNaira(monthlyStats.total)}</span></div>
               </div>
+              </>)}
 
               <div style={{position:'relative', marginTop:14}} ref={shareMenuRef}>
                 <button className="btn-secondary" style={{width:'100%', height:40, display:'flex', alignItems:'center', justifyContent:'center', gap:8}} onClick={()=>{ setShowYearShareMenu(false); setShowShareMenu(v=>!v) }} disabled={(monthlyStats.days + monthlyStats.leaveDays)===0}>
@@ -2078,15 +2097,15 @@ export default function App() {
             </div>
             <p className="sp-hint"><strong>%</strong> of daily rate (50 = half pay) · <strong>₦</strong> flat per day · logged days keep their amounts.</p>
 
-            <button type="button" className="sp-fold" onClick={()=>setSpFold(f=>({...f, pay:!f.pay}))} aria-expanded={spFold.pay}>
-              <span className="sp-fold-main">
-                <span className="sp-fold-title">Your pay rates</span>
-                <span className="sp-fold-sum">Regular {formatNaira(settings.dailyRate)} · 2× {formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span>
+            <button type="button" className="dp-fold" onClick={()=>setSpFold(f=>({...f, pay:!f.pay}))} aria-expanded={spFold.pay}>
+              <span className="dp-fold-main">
+                <span className="dp-fold-title">Your pay rates</span>
+                <span className="dp-fold-sum">Regular {formatNaira(settings.dailyRate)} · 2× {formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span>
               </span>
-              <span className={`sp-fold-chev${spFold.pay ? ' open' : ''}`} aria-hidden="true">▸</span>
+              <span className={`dp-fold-chev${spFold.pay ? ' open' : ''}`} aria-hidden="true">▸</span>
             </button>
             {spFold.pay && (
-              <div className="sp-card sp-fold-body">
+              <div className="sp-card dp-fold-body">
                 <div className="sp-kv"><span>Regular (OK)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate)}</span></div>
                 <div className="sp-kv"><span>Weekend (2×)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span></div>
                 <div className="sp-kv"><span>Overtime (OT 2×)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span></div>
@@ -2098,15 +2117,15 @@ export default function App() {
               </div>
             )}
 
-            <button type="button" className="sp-fold" onClick={()=>setSpFold(f=>({...f, track:!f.track}))} aria-expanded={spFold.track}>
-              <span className="sp-fold-main">
-                <span className="sp-fold-title">Tracking</span>
-                <span className="sp-fold-sum">{getMonthName(realMonth, true)} {realYear} · {isSupabaseConfigured ? (user ? 'Synced' : 'Sync ready — sign in') : 'Local only'}</span>
+            <button type="button" className="dp-fold" onClick={()=>setSpFold(f=>({...f, track:!f.track}))} aria-expanded={spFold.track}>
+              <span className="dp-fold-main">
+                <span className="dp-fold-title">Tracking</span>
+                <span className="dp-fold-sum">{getMonthName(realMonth, true)} {realYear} · {isSupabaseConfigured ? (user ? 'Synced' : 'Sync ready — sign in') : 'Local only'}</span>
               </span>
-              <span className={`sp-fold-chev${spFold.track ? ' open' : ''}`} aria-hidden="true">▸</span>
+              <span className={`dp-fold-chev${spFold.track ? ' open' : ''}`} aria-hidden="true">▸</span>
             </button>
             {spFold.track && (
-              <div className="sp-card sp-fold-body">
+              <div className="sp-card dp-fold-body">
                 <div className="sp-kv"><span>Current month</span><span className="sp-kv-val">{getMonthName(realMonth)} {realYear} · Active</span></div>
                 <div className="sp-kv"><span>Tracking started</span><span className="sp-kv-val">{startMonthKey || 'Not set'}</span></div>
                 <div className="sp-kv"><span>Cloud sync</span><span className="sp-kv-val" style={{color: isSupabaseConfigured ? 'var(--green-ink)' : 'var(--danger)'}}>{isSupabaseConfigured ? (user ? 'Connected' : 'Ready — sign in') : 'Not configured'}</span></div>
