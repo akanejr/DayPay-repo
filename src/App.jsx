@@ -178,8 +178,14 @@ export default function App() {
   const [profileSaving, setProfileSaving] = useState(false)
 
   const [theme, setTheme] = useState(() => {
-    try { return localStorage.getItem('work_tracker_theme') || 'light' } catch { return 'light' }
+    try {
+      const v = localStorage.getItem('work_tracker_theme')
+      return ['light', 'dark', 'glass-light', 'glass-dark'].includes(v) ? v : 'light'
+    } catch { return 'light' }
   })
+  // v18 glass appearance: Glass is a third mode with a light/dark flavor.
+  // Standard light/dark keep their exact look; glass only adds data-glass="on".
+  const isDarkAppearance = theme === 'dark' || theme === 'glass-dark'
 
   const [showForgot, setShowForgot] = useState(false)
   const [forgotEmail, setForgotEmail] = useState('')
@@ -206,7 +212,9 @@ export default function App() {
   const splashStartRef = useRef(Date.now())
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme)
+    const glass = theme.startsWith('glass')
+    document.documentElement.setAttribute('data-theme', glass ? theme.slice(6) : theme)
+    document.documentElement.setAttribute('data-glass', glass ? 'on' : 'off')
     try { localStorage.setItem('work_tracker_theme', theme) } catch {}
   }, [theme])
 
@@ -1427,7 +1435,7 @@ export default function App() {
             <span className="hdr-lockup" title="DayPay - Know what your work is worth.">
               <svg className="hdr-mark" viewBox="0 0 48 48" width="27" height="27" role="img" aria-label="DayPay logo">
                 <rect x="15" y="16" width="26" height="26" rx="7" fill="var(--daypay-green)"/>
-                <rect x="7" y="8" width="26" height="26" rx="7" fill={theme==='dark' ? '#0D1424' : '#FFFFFF'} stroke={theme==='dark' ? '#2A3550' : '#0B1B32'} strokeWidth="4"/>
+                <rect x="7" y="8" width="26" height="26" rx="7" fill={isDarkAppearance ? '#0D1424' : '#FFFFFF'} stroke={isDarkAppearance ? '#2A3550' : '#0B1B32'} strokeWidth="4"/>
               </svg>
               <span className="wordmark"><span className="wm-day">Day</span><span className="wm-pay">Pay</span></span>
             </span>
@@ -1450,15 +1458,17 @@ export default function App() {
                     </div>
                   </div>
                 )}
-                <button className="hamburger-item" onClick={()=>{setTheme(theme==='light'?'dark':'light'); setShowHamburgerMenu(false)}}>
+                <button className="hamburger-item" onClick={()=>{setTheme(theme==='light' ? 'dark' : theme==='dark' ? 'glass-dark' : theme==='glass-dark' ? 'glass-light' : 'light'); setShowHamburgerMenu(false)}}>
                   <span className="hamburger-icon">
                     {theme==='light' ? (
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3a6 6 0 0 0 9 9c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9Z"/></svg>
+                    ) : theme==='dark' || theme==='glass-dark' ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z"/><path d="M19 15l.7 1.8 1.8.7-1.8.7L19 19.7l-.7-1.8-1.8-.7 1.8-.7L19 15Z"/></svg>
                     ) : (
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>
                     )}
                   </span>
-                  <span>{theme==='light' ? 'Dark mode' : 'Light mode'}</span>
+                  <span>{theme==='light' ? 'Dark mode' : theme==='dark' ? 'Glass mode' : theme==='glass-dark' ? 'Glass · Light' : 'Light mode'}</span>
                 </button>
                 {isSupabaseConfigured && (
                   user ? (
@@ -2011,6 +2021,32 @@ export default function App() {
               )}
             </div>
 
+            <div className="sp-section-label">Appearance</div>
+            <div className="sp-card">
+              <div className="app-tiles">
+                <button type="button" className={`app-tile${theme==='light' ? ' on' : ''}`} onClick={()=>setTheme('light')} aria-pressed={theme==='light'}>
+                  <span className="app-sw sw-light" aria-hidden="true" />
+                  Light
+                </button>
+                <button type="button" className={`app-tile${theme==='dark' ? ' on' : ''}`} onClick={()=>setTheme('dark')} aria-pressed={theme==='dark'}>
+                  <span className="app-sw sw-dark" aria-hidden="true" />
+                  Dark
+                </button>
+                <button type="button" className={`app-tile${theme.startsWith('glass') ? ' on' : ''}`} onClick={()=>setTheme(isDarkAppearance ? 'glass-dark' : 'glass-light')} aria-pressed={theme.startsWith('glass')}>
+                  <span className="app-sw sw-glass" aria-hidden="true" />
+                  Glass
+                </button>
+              </div>
+              {theme.startsWith('glass') && (
+                <div className="app-flavor">
+                  <span className="app-flavor-lbl">Glass in</span>
+                  <button type="button" className={`app-flavor-btn${theme==='glass-light' ? ' on' : ''}`} onClick={()=>setTheme('glass-light')}>Light</button>
+                  <button type="button" className={`app-flavor-btn${theme==='glass-dark' ? ' on' : ''}`} onClick={()=>setTheme('glass-dark')}>Dark</button>
+                  <span className="app-flavor-note">Frosted surfaces · standard modes stay untouched</span>
+                </div>
+              )}
+            </div>
+
             <div className="sp-section-label">Earnings</div>
             <div className="sp-card">
               <div className="sp-rh">
@@ -2155,7 +2191,7 @@ export default function App() {
               <div style={{display:'flex', alignItems:'center', gap:10}}>
                 <svg className="hdr-mark" viewBox="0 0 48 48" width="21" height="21" role="img" aria-label="DayPay logo">
                   <rect x="15" y="16" width="26" height="26" rx="7" fill="var(--daypay-green)"/>
-                  <rect x="7" y="8" width="26" height="26" rx="7" fill={theme==='dark' ? '#0D1424' : '#FFFFFF'} stroke={theme==='dark' ? '#2A3550' : '#0B1B32'} strokeWidth="4"/>
+                  <rect x="7" y="8" width="26" height="26" rx="7" fill={isDarkAppearance ? '#0D1424' : '#FFFFFF'} stroke={isDarkAppearance ? '#2A3550' : '#0B1B32'} strokeWidth="4"/>
                 </svg>
                 <span>{showForgot ? 'Reset password' : authMode==='signin' ? 'Sign in to DayPay' : 'Create DayPay account'}</span>
               </div>
@@ -2166,7 +2202,7 @@ export default function App() {
                 <span className="hdr-lockup" style={{justifyContent:'center', marginBottom:8}} title="DayPay - Know what your work is worth.">
                   <svg className="hdr-mark" viewBox="0 0 48 48" width="30" height="30" role="img" aria-label="DayPay logo">
                     <rect x="15" y="16" width="26" height="26" rx="7" fill="var(--daypay-green)"/>
-                    <rect x="7" y="8" width="26" height="26" rx="7" fill={theme==='dark' ? '#0D1424' : '#FFFFFF'} stroke={theme==='dark' ? '#2A3550' : '#0B1B32'} strokeWidth="4"/>
+                    <rect x="7" y="8" width="26" height="26" rx="7" fill={isDarkAppearance ? '#0D1424' : '#FFFFFF'} stroke={isDarkAppearance ? '#2A3550' : '#0B1B32'} strokeWidth="4"/>
                   </svg>
                   <span className="wordmark" style={{fontSize:'21px'}}><span className="wm-day">Day</span><span className="wm-pay">Pay</span></span>
                 </span>

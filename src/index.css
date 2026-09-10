@@ -1437,3 +1437,75 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .dp-fold-body { margin-top: 8px; }
 .dp-fold-body .sp-notes { margin-top: 10px; }
 .summary-top .dp-fold { margin-top: 10px; }
+
+/* ===== v18: Appearance picker (Light · Dark · Glass) ===== */
+.app-tiles { display: flex; gap: 8px; }
+.app-tile { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 10px 8px 9px; border-radius: 12px; border: 1.5px solid var(--border); background: var(--bg-elevated); color: var(--text-2); font-family: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer; }
+.app-tile.on { border-color: var(--green-ink); color: var(--green-ink); background: var(--green-wash); }
+.app-sw { width: 100%; height: 26px; border-radius: 7px; border: 1px solid var(--border); }
+.app-sw.sw-light { background: linear-gradient(180deg, #FFFFFF 55%, #F2F8F4 100%); }
+.app-sw.sw-dark { background: linear-gradient(180deg, #0C1425 55%, #080C16 100%); }
+.app-sw.sw-glass { background: radial-gradient(120% 90% at 85% -10%, rgba(34,222,94,.4), transparent 55%), radial-gradient(130% 100% at -10% 110%, rgba(30,64,110,.6), transparent 60%), #080C16; border-color: rgba(255,255,255,.28); }
+.app-flavor { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.app-flavor-lbl { font-size: 11.5px; font-weight: 800; color: var(--text-3); }
+.app-flavor-btn { border: 1px solid var(--border); background: transparent; color: var(--text-2); border-radius: 999px; padding: 6px 13px; font-size: 11.5px; font-weight: 700; cursor: pointer; font-family: inherit; }
+.app-flavor-btn.on { border-color: var(--green-ink); color: var(--green-ink); background: var(--green-wash); }
+.app-flavor-note { font-size: 10.5px; color: var(--text-3); }
+
+/* ===== v18: GLASS appearance (opt-in) — frosted surfaces =====
+   Standard Light/Dark are untouched. Everything below applies only when
+   data-glass="on" AND the browser supports backdrop-filter; otherwise
+   glass mode renders as the standard theme (safe fallback). */
+@supports ((backdrop-filter: blur(4px)) or (-webkit-backdrop-filter: blur(4px))) {
+
+  /* canvas — glass needs something to blur */
+  [data-glass="on"][data-theme="dark"] .phone-frame {
+    background: radial-gradient(120% 90% at 88% -12%, rgba(22,163,74,.20), transparent 55%),
+                radial-gradient(130% 100% at -12% 112%, rgba(19,42,74,.55), transparent 62%),
+                #080C16;
+  }
+  [data-glass="on"][data-theme="light"] .phone-frame {
+    background: radial-gradient(95% 75% at 92% -6%, rgba(21,128,61,.09), transparent 60%),
+                radial-gradient(95% 85% at -6% 108%, rgba(59,130,246,.08), transparent 58%),
+                #FFFFFF;
+  }
+
+  /* header */
+  [data-glass="on"][data-theme="dark"] .header { background: rgba(8,12,22,.62); -webkit-backdrop-filter: blur(16px) saturate(150%); backdrop-filter: blur(16px) saturate(150%); border-bottom: 1px solid rgba(255,255,255,.08); }
+  [data-glass="on"][data-theme="light"] .header { background: rgba(255,255,255,.62); -webkit-backdrop-filter: blur(16px) saturate(150%); backdrop-filter: blur(16px) saturate(150%); border-bottom: 1px solid rgba(11,27,50,.07); }
+
+  /* hero panel */
+  [data-glass="on"][data-theme="dark"] .summary-top { background: rgba(13,21,40,.52); -webkit-backdrop-filter: blur(18px) saturate(150%); backdrop-filter: blur(18px) saturate(150%); border-color: rgba(255,255,255,.10); box-shadow: 0 18px 40px rgba(2,6,16,.45); }
+  [data-glass="on"][data-theme="light"] .summary-top { background: rgba(255,255,255,.55); -webkit-backdrop-filter: blur(16px) saturate(140%); backdrop-filter: blur(16px) saturate(140%); border-color: rgba(255,255,255,.85); box-shadow: 0 12px 30px rgba(11,27,50,.10), inset 0 0 0 1px rgba(226,229,233,.9); }
+
+  /* details/settings folds */
+  [data-glass="on"][data-theme="dark"] .dp-fold { background: rgba(255,255,255,.055); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border-color: rgba(255,255,255,.09); }
+  [data-glass="on"][data-theme="light"] .dp-fold { background: rgba(255,255,255,.55); -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px); border-color: rgba(226,229,233,.8); }
+
+  /* calendar cells — light blur only, cheap on the GPU; stamps stay solid */
+  [data-glass="on"][data-theme="dark"] .cell { background: rgba(255,255,255,.05); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); border: 1px solid rgba(255,255,255,.07); }
+  [data-glass="on"][data-theme="dark"] .cell.is-weekend { background: rgba(22,163,74,.12); border-color: rgba(74,222,128,.16); }
+  [data-glass="on"][data-theme="light"] .cell { background: rgba(255,255,255,.52); -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px); border: 1px solid rgba(226,229,233,.75); }
+  [data-glass="on"][data-theme="light"] .cell.is-weekend { background: rgba(21,128,61,.07); border-color: rgba(21,128,61,.14); }
+
+  /* future chips */
+  [data-glass="on"][data-theme="dark"] .future-chip { background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08); }
+  [data-glass="on"][data-theme="light"] .future-chip { background: rgba(255,255,255,.5); border: 1px solid rgba(226,229,233,.8); }
+
+  /* celebration card — navy glass in both flavors */
+  [data-glass="on"] .dp-toast { background: rgba(11,27,50,.58); -webkit-backdrop-filter: blur(20px) saturate(160%); backdrop-filter: blur(20px) saturate(160%); border: 1px solid rgba(255,255,255,.16); }
+
+  /* modal sheets + menus */
+  [data-glass="on"][data-theme="dark"] .modal { background: rgba(13,21,40,.66); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border-color: rgba(255,255,255,.10); }
+  [data-glass="on"][data-theme="light"] .modal { background: rgba(255,255,255,.66); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border-color: rgba(255,255,255,.9); box-shadow: 0 18px 44px rgba(11,27,50,.16); }
+  [data-glass="on"][data-theme="dark"] .hamburger-dropdown { background: rgba(13,21,40,.72); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); border-color: rgba(255,255,255,.10); }
+  [data-glass="on"][data-theme="light"] .hamburger-dropdown { background: rgba(255,255,255,.72); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); border-color: rgba(226,229,233,.9); }
+  [data-glass="on"][data-theme="dark"] .share-dropdown { background: rgba(13,21,40,.72); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); border-color: rgba(255,255,255,.10); }
+  [data-glass="on"][data-theme="light"] .share-dropdown { background: rgba(255,255,255,.72); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); border-color: rgba(226,229,233,.9); }
+
+  /* settings cards */
+  [data-glass="on"][data-theme="dark"] .sp-card { background: rgba(13,21,40,.5); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border-color: rgba(255,255,255,.09); }
+  [data-glass="on"][data-theme="light"] .sp-card { background: rgba(255,255,255,.55); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+  [data-glass="on"][data-theme="dark"] .sp-rh-row { background: rgba(255,255,255,.045); }
+  [data-glass="on"][data-theme="light"] .sp-rh-row { background: rgba(255,255,255,.5); }
+}
