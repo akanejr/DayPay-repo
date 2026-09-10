@@ -53,6 +53,37 @@ const DEFAULT_LEAVE_TYPES = [
 ]
 
 // Nigerian Public Holidays - Fixed + some movable for 2024-2027 (fallback if API fails)
+/* AnimatedAmount — premium count-up for earnings figures (visual only).
+   Renders the same formatted value the app already computes; on change,
+   counts smoothly to the new value (550ms, ease-out). Reduced motion =
+   instant swap. Parent carries .dp-count so ux-motion skips its bump. */
+function AnimatedAmount({ value }) {
+  const ref = useRef(null)
+  const prevRef = useRef(value)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const from = prevRef.current
+    const to = value
+    prevRef.current = value
+    if (from === to) { el.textContent = formatNaira(to); return }
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (reduce) { el.textContent = formatNaira(to); return }
+    const DUR = 550
+    const t0 = performance.now()
+    let raf = 0
+    const step = (t) => {
+      const p = Math.min(1, (t - t0) / DUR)
+      const e = 1 - Math.pow(1 - p, 3)
+      el.textContent = formatNaira(Math.round(from + (to - from) * e))
+      if (p < 1) raf = requestAnimationFrame(step)
+    }
+    raf = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(raf)
+  }, [value])
+  return <span className="dp-amount" ref={ref}>{formatNaira(value)}</span>
+}
+
 function getNigerianHolidaysFallback(year) {
   const fixed = [
     { month: 0, day: 1, name: "New Year's Day" },
@@ -522,6 +553,70 @@ export default function App() {
 
   const todayKey = formatDateKey(new Date())
 
+  /* ============================================================
+     DayPay motion layer — success feedback (VISUAL ONLY).
+     Toasts and cell reactions fire exclusively from the confirmed
+     save paths (the setAttendance commits in handleCellClick /
+     handleOvertimeAction / chip logging). Never on raw clicks,
+     never on load, never on failure. All amounts come from the
+     app's existing calculations — nothing is hardcoded.
+     ============================================================ */
+  const [dpToast, setDpToast] = useState(null)
+  const dpToastTimer = useRef(null)
+  const [dpJust, setDpJust] = useState(null)
+  const dpJustTimer = useRef(null)
+
+  function dpShowToast(toast) {
+    if (dpToastTimer.current) clearTimeout(dpToastTimer.current)
+    setDpToast({ ...toast, id: Date.now() })
+    dpToastTimer.current = setTimeout(() => setDpToast(null), toast.variant === 'weekend' ? 3000 : 2600)
+  }
+
+  function dpCelebrateSave(key, kind, amount) {
+    if (dpJustTimer.current) clearTimeout(dpJustTimer.current)
+    setDpJust({ key, kind })
+    dpJustTimer.current = setTimeout(() => setDpJust(null), 1700)
+    if (kind === 'weekend') dpShowToast({ variant: 'weekend', title: 'Weekend OT!', sub: `${formatNaira(amount)} added` })
+    else if (kind === 'ot') dpShowToast({ variant: 'ot', title: 'OT recorded', sub: `${formatNaira(amount)} added` })
+    else if (kind === 'holiday') dpShowToast({ variant: 'holiday', title: 'Holiday OT', sub: `${formatNaira(amount)} added` })
+    else dpShowToast({ variant: 'work', title: 'Work recorded' })
+  }
+
+  /* Month / year completion — recognizes an EXISTING event only:
+     the most recent month (and year) that completed since the last
+     visit. Pure read of attendance; locking logic untouched. One-time
+     via localStorage flags; waits for cloud sync to settle so it never
+     celebrates on unconfirmed data; fires only shortly after open. */
+  const dpSyncSettled = useRef(false)
+  useEffect(() => { if (syncStatus === 'synced' || syncStatus === 'error') dpSyncSettled.current = true }, [syncStatus])
+  const dpMilestoneWindow = useRef(0)
+  useEffect(() => {
+    if (!loaded || showSplash || authLoading) return
+    if (isSupabaseConfigured && user && !dpSyncSettled.current) return
+    if (!dpMilestoneWindow.current) dpMilestoneWindow.current = Date.now()
+    if (Date.now() - dpMilestoneWindow.current > 8000) return
+    try {
+      const now = realCurrentDate
+      const prevYear = now.getFullYear() - 1
+      if (String(prevYear) !== localStorage.getItem('dp_motion_year')) {
+        const yTotal = Object.keys(attendance).filter(k => k.startsWith(prevYear + '-')).reduce((s, k) => s + attendance[k].amount, 0)
+        localStorage.setItem('dp_motion_year', String(prevYear))
+        if (yTotal > 0) {
+          dpShowToast({ variant: 'year', title: `${prevYear} Complete`, sub: `${formatNaira(yTotal)} earned` })
+          return
+        }
+      }
+      const pm = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      const mk = `${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, '0')}`
+      if (mk !== localStorage.getItem('dp_motion_month')) {
+        const mTotal = Object.keys(attendance).filter(k => k.startsWith(mk + '-')).reduce((s, k) => s + attendance[k].amount, 0)
+        localStorage.setItem('dp_motion_month', mk)
+        if (mTotal > 0) dpShowToast({ variant: 'month', title: `${getMonthName(pm.getMonth())} Complete`, sub: `${formatNaira(mTotal)} earned` })
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, showSplash, authLoading, syncStatus, attendance])
+
   function handleCellClick(dateObj) {
     if (!dateObj) return
     if (!isEditable) return
@@ -531,6 +626,8 @@ export default function App() {
     const holiday = isHolidayDay(dateObj)
 
     if (isWeekend) {
+      const wasRecorded = !!attendance[key]
+      const wkndAmount = settings.dailyRate * settings.weekendMultiplier
       setAttendance(prev => {
         const next = { ...prev }
         if (next[key]) delete next[key]
@@ -540,8 +637,12 @@ export default function App() {
         }
         return next
       })
+      // committed (local-first save) → celebrate the confirmed weekend OT
+      if (!wasRecorded) dpCelebrateSave(key, 'weekend', wkndAmount)
     } else if (holiday) {
       // Holiday - toggle with holiday rate
+      const wasHolRecorded = !!attendance[key]
+      const holAmount = settings.dailyRate * settings.holidayMultiplier
       setAttendance(prev => {
         const next = { ...prev }
         if (next[key]) delete next[key]
@@ -551,12 +652,14 @@ export default function App() {
         }
         return next
       })
+      if (!wasHolRecorded) dpCelebrateSave(key, 'holiday', holAmount)
     } else {
       if (!record) {
         setAttendance(prev => ({
           ...prev,
           [key]: { date: key, amount: settings.dailyRate, isWeekend: false, isOvertime: false, isHoliday: false, rate: settings.dailyRate, multiplier: 1 }
         }))
+        dpCelebrateSave(key, 'work', settings.dailyRate)
       } else {
         setEditingKey(key)
         setEditingDate(dateObj)
@@ -584,19 +687,30 @@ export default function App() {
         return { ...prev, [key]: { ...rec, isOvertime: false, isWeekend: false, isHoliday: false, isLeave: false, leaveType: undefined, amount: rec.rate, multiplier: 1, holidayName: undefined } }
       })
     } else if (action === 'overtime') {
+      const oldRec = attendance[key]
       setAttendance(prev => {
         const rec = prev[key]
         if (!rec) return prev
         const mult = settings.weekendMultiplier
         return { ...prev, [key]: { ...rec, isOvertime: true, isWeekend: false, isHoliday: false, isLeave: false, leaveType: undefined, amount: rec.rate * mult, multiplier: mult, holidayName: undefined } }
       })
+      // committed → enhanced confirmation with the actual increase
+      if (oldRec && !oldRec.isOvertime) {
+        const otDelta = oldRec.rate * settings.weekendMultiplier - oldRec.amount
+        if (otDelta > 0) dpCelebrateSave(key, 'ot', otDelta)
+      }
     } else if (action === 'holiday') {
+      const oldHol = attendance[key]
       setAttendance(prev => {
         const rec = prev[key]
         if (!rec) return prev
         const mult = settings.holidayMultiplier
         return { ...prev, [key]: { ...rec, isHoliday: true, isWeekend: false, isOvertime: false, isLeave: false, leaveType: undefined, amount: rec.rate * mult, multiplier: mult } }
       })
+      if (oldHol && !oldHol.isHoliday) {
+        const holDelta = oldHol.rate * settings.holidayMultiplier - oldHol.amount
+        if (holDelta > 0) dpCelebrateSave(key, 'holiday', holDelta)
+      }
     } else if (action.startsWith('leave-')) {
       const leaveType = action.slice(6)
       const lt = ltById(leaveType)
@@ -1124,6 +1238,24 @@ export default function App() {
     <div className="app-root">
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Geist+Mono:wght@400;500;600&display=swap');`}</style>
 
+      {/* DayPay motion layer — success toast (visual only, confirmed saves only) */}
+      {dpToast && (
+        <div className={`dp-toast dp-toast-${dpToast.variant}`} role="status" aria-live="polite" key={dpToast.id}>
+          {dpToast.variant === 'weekend' ? (
+            <span className="dp-toast-slips" aria-hidden="true" />
+          ) : (
+            <span className="dp-toast-slip" aria-hidden="true" />
+          )}
+          <span className="dp-toast-text">
+            <strong>{dpToast.title}</strong>
+            {dpToast.sub && <em>{dpToast.sub}</em>}
+          </span>
+          {dpToast.variant === 'weekend' && (
+            <span className="dp-toast-sparks" aria-hidden="true"><i /><i /><i /></span>
+          )}
+        </div>
+      )}
+
       {showSplash && (
         <div className="daypay-splash">
           <div className="splash-content">
@@ -1336,7 +1468,7 @@ export default function App() {
                 const isOvertime = record?.isOvertime
                 const isHol = record?.isHoliday || holiday
                 return (
-                  <button key={key} className={`cell ${worked?'worked':''} ${isWeekend?'is-weekend':''} ${isToday?'is-today':''} ${!isEditable?'locked-cell':''} ${isOvertime?'is-overtime':''} ${isHol?'is-holiday':''} ${record?.isLeave?'is-leave':''} ${record?.isLeave && record.amount===0?'is-leave-unpaid':''}`} onClick={()=>handleCellClick(dateObj)} disabled={!isEditable && !worked} title={record?.isLeave ? `${leaveLabel(record.leaveType)} — ${record.amount>0 ? 'Paid leave' : 'Unpaid leave'}` : holiday ? `${holiday.name} — ${isWeekend ? 'Weekend' : 'Holiday'} 2×` : isWeekend ? 'Weekend 2×' : 'Weekday'}>
+                  <button key={key} className={`cell ${worked?'worked':''} ${isWeekend?'is-weekend':''} ${isToday?'is-today':''} ${!isEditable?'locked-cell':''} ${isOvertime?'is-overtime':''} ${isHol?'is-holiday':''} ${record?.isLeave?'is-leave':''} ${record?.isLeave && record.amount===0?'is-leave-unpaid':''} ${dpJust && dpJust.key===key ? 'dp-just' : ''}`} onClick={()=>handleCellClick(dateObj)} disabled={!isEditable && !worked} title={record?.isLeave ? `${leaveLabel(record.leaveType)} — ${record.amount>0 ? 'Paid leave' : 'Unpaid leave'}` : holiday ? `${holiday.name} — ${isWeekend ? 'Weekend' : 'Holiday'} 2×` : isWeekend ? 'Weekend 2×' : 'Weekday'}>
                     <span className="date-num">{dateObj.getDate()}</span>
                     {holiday && !worked && <span className="holiday-dot" title={holiday.name}></span>}
                     {worked && (
@@ -1392,8 +1524,8 @@ export default function App() {
 
             <div className="summary-card">
               <div className="summary-top">
-                <div className="summary-amount">
-                  {formatNaira(monthlyStats.total)}
+                <div className="summary-amount dp-count">
+                  <AnimatedAmount value={monthlyStats.total} />
                   {monthStatus==='locked' && <span className="final-badge">FINAL</span>}
                   {monthStatus==='active' && <span className="active-badge">IN PROGRESS</span>}
                 </div>
@@ -1520,7 +1652,7 @@ export default function App() {
 
             <div className="year-totals">
               <div className="yt-main">
-                <div className="yt-amount">{formatNaira(yearlyStats.total)}</div>
+                <div className="yt-amount dp-count"><AnimatedAmount value={yearlyStats.total} /></div>
                 <div className="yt-label">
                   {year===realYear ? `Total earned this year` : year < realYear ? `Total earned in ${year} — Final` : `Future year`}
                   {displayName ? ` · ${displayName}` : ''} · {yearlyStats.days} days{yearlyStats.leaveDays>0 ? ` · ${yearlyStats.leaveDays} on leave` : ''} · Goal {formatNaira(settings.salaryGoal)} · {goalProgressYear}% of yearly goal

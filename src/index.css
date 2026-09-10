@@ -1275,3 +1275,125 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   border-radius: var(--radius-lg); padding: 20px 16px;
   color: var(--text-3); font-size: 12.5px; font-weight: 600; line-height: 1.5;
 }
+
+/* ============================================================
+   DayPay motion layer — micro-interactions & success feedback.
+   Visual only: reacts to classes applied by confirmed save
+   paths (dp-just) and the toast system. No layout side effects.
+   ============================================================ */
+
+/* 1 · Cell press — immediate tactile response */
+.cell:not(:disabled):active { transform: scale(0.93); }
+
+/* 2 · Just-recorded — gentle green wash under the cell */
+.cell.dp-just { animation: dpWash 0.6s ease-out; }
+@keyframes dpWash {
+  0%   { box-shadow: inset 0 0 0 999px var(--green-wash); }
+  100% { box-shadow: inset 0 0 0 999px transparent; }
+}
+
+/* 3 · Slip settles with a restrained spring */
+.cell.dp-just .stamp { animation: dpStampLift 0.5s cubic-bezier(0.34,1.4,0.64,1); }
+@keyframes dpStampLift {
+  0%   { opacity: 0; transform: translateX(-50%) translateY(8px) scale(0.6); }
+  60%  { opacity: 1; transform: translateX(-50%) translateY(-2px) scale(1.05); }
+  100% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+
+/* 4 · WEEKEND OT — the green slip peeks out from behind the navy slip */
+.cell.dp-just .stamp-2x::before {
+  animation: dpPeekOut 0.45s cubic-bezier(0.16,1,0.3,1) 0.12s backwards;
+}
+@keyframes dpPeekOut {
+  from { transform: translate(6px, 6px); }  /* tucked behind the front slip */
+  to   { transform: translate(0, 0); }      /* resting peek position */
+}
+
+/* 5 · Weekday OT — subtle green accent on the amber slip */
+.cell.dp-just .stamp-ot::before { animation: dpOtAccent 0.65s ease 0.1s; }
+@keyframes dpOtAccent {
+  0%, 55% { border-color: var(--daypay-green); }
+  100%    { border-color: var(--amber); }
+}
+
+/* 6 · Success toasts — compact, safe-area aware, never blocking */
+.dp-toast {
+  position: fixed; left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%); z-index: 9500;
+  display: flex; align-items: center; gap: 11px;
+  max-width: min(86vw, 330px);
+  padding: 10px 16px; border-radius: 14px;
+  background: #0B1B32; color: #fff;
+  box-shadow: 0 10px 28px rgba(11,27,50,0.30), inset 0 0 0 1px rgba(255,255,255,0.07);
+  font-family: 'Manrope', -apple-system, sans-serif;
+  pointer-events: none;
+  animation: dpToastLife 2600ms cubic-bezier(0.16,1,0.3,1) forwards;
+}
+.dp-toast-weekend { animation-duration: 3000ms; padding: 12px 18px; }
+.dp-toast-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.dp-toast strong { font-size: 14px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.2; }
+.dp-toast em { font-style: normal; font-size: 12.5px; line-height: 1.25; color: #4ADE80; font-variant-numeric: tabular-nums; }
+.dp-toast-weekend strong { color: #4ADE80; }
+.dp-toast-month strong, .dp-toast-year strong { font-size: 15px; }
+@keyframes dpToastLife {
+  0%   { opacity: 0; transform: translateX(-50%) translateY(14px) scale(0.96); }
+  8%   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+  90%  { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateX(-50%) translateY(6px); }
+}
+
+/* single green slip — simple confirmations (work / OT / holiday / month / year) */
+.dp-toast-slip { width: 10px; height: 10px; border-radius: 3px; flex: none; background: #16A34A; }
+
+/* two-slip Peeking Slip glyph — weekend OT only */
+.dp-toast-slips { position: relative; width: 20px; height: 20px; flex: none; }
+.dp-toast-slips::before {
+  content: ''; position: absolute; right: 1px; bottom: 1px;
+  width: 12px; height: 12px; border-radius: 3.5px; background: #16A34A;
+  animation: dpSlipPeek 0.5s cubic-bezier(0.16,1,0.3,1) 0.12s backwards;
+}
+.dp-toast-slips::after {
+  content: ''; position: absolute; left: 1px; top: 1px;
+  width: 12px; height: 12px; border-radius: 3.5px; border: 2px solid #fff;
+}
+@keyframes dpSlipPeek {
+  from { transform: translate(6px, 6px); }
+  to   { transform: translate(0, 0); }
+}
+
+/* tiny rising slips — weekend OT only, restrained */
+.dp-toast-sparks { position: absolute; top: -6px; right: 10px; width: 18px; height: 18px; }
+.dp-toast-sparks i {
+  position: absolute; bottom: 0; width: 5px; height: 5px; border-radius: 1.5px;
+  background: #16A34A; opacity: 0;
+  animation: dpSpark 900ms ease-out forwards;
+}
+.dp-toast-sparks i:nth-child(1) { right: 0;    animation-delay: 180ms; }
+.dp-toast-sparks i:nth-child(2) { right: 7px;  animation-delay: 320ms; background: #4ADE80; }
+.dp-toast-sparks i:nth-child(3) { right: 2px;  animation-delay: 460ms; }
+@keyframes dpSpark {
+  0%   { opacity: 0; transform: translateY(0); }
+  25%  { opacity: 0.9; }
+  100% { opacity: 0; transform: translateY(-20px); }
+}
+
+/* 7 · Reduced motion — info stays, movement goes */
+@media (prefers-reduced-motion: reduce) {
+  .cell:not(:disabled):active { transform: none; }
+  .cell.dp-just { animation: none; }
+  .cell.dp-just .stamp,
+  .cell.dp-just .stamp-2x::before,
+  .cell.dp-just .stamp-ot::before { animation: none !important; }
+  .dp-toast { animation: dpToastLifeRM 2600ms ease forwards; }
+  .dp-toast-weekend { animation-duration: 3000ms; }
+  .dp-toast-slips::before,
+  .dp-toast-sparks i { animation: none !important; }
+  .dp-toast-sparks i { display: none; }
+  @keyframes dpToastLifeRM {
+    0%   { opacity: 0; }
+    8%   { opacity: 1; }
+    90%  { opacity: 1; }
+    100% { opacity: 0; }
+  }
+}

@@ -63,7 +63,12 @@
     var v = toNum(el.textContent);
     if (isNaN(v)) return;
     if (typeof el.__dpValue !== 'number') { el.__dpValue = v; return; } // adopt silently
-    if (el.__dpValue !== v) { el.__dpValue = v; bump(el); }
+    if (el.__dpValue !== v) {
+      el.__dpValue = v;
+      /* .dp-count elements run their own smooth count-up (AnimatedAmount);
+         bumping them mid-count would restart a keyframe every frame. */
+      if (!(el.classList && el.classList.contains('dp-count'))) bump(el);
+    }
   }
 
   /* ---- 3. One-shot enter animation for swapped views ---- */

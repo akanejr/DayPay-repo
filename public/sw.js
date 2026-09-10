@@ -1,5 +1,5 @@
 // DayPay Service Worker - PWA offline-first
-const CACHE_NAME = 'daypay-v15-brand'
+const CACHE_NAME = 'daypay-v16-motion'
 const APP_SHELL = [
   '/',
   '/index.html',
