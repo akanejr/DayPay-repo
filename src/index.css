@@ -199,7 +199,6 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   box-shadow: none;
 }
 .icon-btn:hover { background: var(--bg-elevated); color: var(--text); border-color: var(--border); }
-.icon-btn:active { transform: scale(0.94); }
 .icon-btn.small { width: 32px; height: 32px; }
 .icon-btn.settings-btn { background: transparent; border-color: transparent; color: var(--text-2); }
 .icon-btn.settings-btn:hover { background: var(--bg-elevated); color: var(--text); border-color: var(--border); }
@@ -287,7 +286,6 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .cell.empty { background: var(--bg); cursor: default; }
 .cell:hover:not(.empty):not(.locked-cell):not(:disabled) { background: var(--bg-cell-hover); }
-.cell:active:not(.empty):not(.locked-cell):not(:disabled) { transform: scale(0.96); }
 .cell.is-weekend { background: #F2F8F4; }
 [data-theme="dark"] .cell.is-weekend { background: #0B1220; }
 .cell.worked { background: var(--bg-cell) !important; }
@@ -801,7 +799,6 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .btn-secondary:hover { border-color: var(--border-strong); color: var(--text); }
 .btn-primary { background: var(--daypay-navy); color: #ffffff; border-color: var(--daypay-navy); }
 .btn-primary:hover { background: var(--daypay-navy-light); }
-.btn-primary:active, .btn-secondary:active { transform: scale(0.98); }
 [data-theme="dark"] .btn-primary { background: #EDF1F7; border-color: #EDF1F7; color: var(--daypay-navy); }
 [data-theme="dark"] .btn-primary:hover { background: #ffffff; }
 .storage-info { margin-top: 14px; text-align: center; font-size: 11px; color: var(--text-4); line-height: 1.5; font-weight: 500; }
@@ -1112,7 +1109,6 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   transition: all 0.15s; text-align: left;
 }
 .share-option:hover { background: var(--bg-elevated-2); color: var(--text); }
-.share-option:active { transform: scale(0.98); }
 .share-option-icon {
   width: 34px; height: 34px; border-radius: 9px;
   display: grid; place-items: center; flex: none;
@@ -1168,7 +1164,6 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   display: grid; place-items: center; transition: all 0.15s; flex: none;
 }
 .sp-back:hover { border-color: var(--border-strong); }
-.sp-back:active { transform: scale(0.95); }
 .sp-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .sp-title-main { font-size: 17px; font-weight: 800; letter-spacing: -0.02em; color: var(--text); }
 .sp-title-sub { font-family: 'Geist Mono', monospace; font-size: 9.5px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-3); }
@@ -1246,7 +1241,6 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .future-log-btn:hover { color: var(--daypay-navy); border-color: var(--daypay-navy); }
 [data-theme="dark"] .future-log-btn:hover { color: #EDF1F7; border-color: #7C8AA5; }
-.future-log-btn:active { transform: scale(0.985); }
 .future-log-count { font-family: 'Geist Mono', monospace; font-size: 9.5px; color: var(--text-4); letter-spacing: 0.04em; font-weight: 500; }
 
 .future-chips-block {
@@ -1263,7 +1257,6 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   transition: all 0.15s;
 }
 .future-chip:hover { border-color: var(--daypay-navy); color: var(--text); background: var(--bg-cell-hover); }
-.future-chip:active { transform: scale(0.93); }
 .future-chip .fc-wd { font-family: 'Geist Mono', monospace; font-size: 8.5px; font-weight: 600; color: var(--text-4); }
 .future-chip .fc-num { font-family: 'Geist Mono', monospace; font-size: 14.5px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
 .future-chip.weekend { border-color: rgba(21,128,61,0.4); background: var(--green-wash); }
@@ -1283,7 +1276,6 @@ button:focus-visible, a:focus-visible, input:focus-visible {
    ============================================================ */
 
 /* 1 · Cell press — immediate tactile response */
-.cell:not(:disabled):active { transform: scale(0.93); }
 
 /* 2 · Just-recorded — gentle green wash under the cell */
 .cell.dp-just { animation: dpWash 0.6s ease-out; }
@@ -1564,3 +1556,22 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 /* ===== v20: payday line — one quiet line under the hero ===== */
 .payday-line { display: block; background: none; border: 0; padding: 0; margin: 6px 0 0; font-family: 'Manrope', -apple-system, sans-serif; font-size: 12.5px; line-height: 1.35; color: var(--text-3); text-align: left; cursor: pointer; }
 .payday-line b { color: var(--text); font-weight: 800; letter-spacing: -0.01em; }
+
+/* ===== v21: the press — one tactile response for everything clickable =====
+   Yield to 0.96 under the finger (cells 0.97, gentler), spring back with a
+   hint of overshoot. :not(#dp-press-skip) never matches an element — it lifts
+   specificity so this single transition + response wins over per-class rules.
+   One rule, everywhere — that consistency is the feel. */
+button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+button:not(#dp-press-skip) {
+  transition: transform 220ms cubic-bezier(0.34,1.56,0.64,1), background 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, filter 0.13s ease, opacity 0.15s ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  button:not(#dp-press-skip):hover:not(:disabled) { transform: translateY(-1px); }
+}
+button:not(#dp-press-skip):active:not(:disabled) { transform: scale(0.96); }
+.cell:not(#dp-press-skip):active:not(.empty):not(.locked-cell):not(:disabled) { transform: scale(0.97); }
+@media (prefers-reduced-motion: reduce) {
+  button:not(#dp-press-skip):active:not(:disabled), .cell:not(#dp-press-skip):active:not(.empty):not(.locked-cell):not(:disabled) { transform: none; opacity: 0.75; }
+  button:not(#dp-press-skip):hover:not(:disabled) { transform: none; }
+}

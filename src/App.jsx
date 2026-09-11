@@ -10,7 +10,7 @@ import jsPDF from 'jspdf'
 const STORAGE_KEY = 'work_tracker_v1'
 // v19-D: splash version — the splash is an occasion (first run + version
 // updates), not a toll. Bump together with sw.js CACHE_NAME on every release.
-const APP_VERSION = 'daypay-v20'
+const APP_VERSION = 'daypay-v21'
 const START_KEY = 'work_tracker_start_v1'
 
 function formatDateKey(d) {
@@ -1692,11 +1692,7 @@ export default function App() {
                 if (!startMonthKey) return false
                 const { year: sY, month: sM } = parseMonthKey(startMonthKey)
                 return (year*12 + month) -1 < sY*12 + sM
-              })()} style={{opacity: (() => {
-                if (!startMonthKey) return 1
-                const { year: sY, month: sM } = parseMonthKey(startMonthKey)
-                return (year*12 + month) -1 < sY*12 + sM ? 0.3 : 1
-              })()}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m15 18-6-6 6-6"/></svg></button>
+              })()}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m15 18-6-6 6-6"/></svg></button>
               <div className="month-title">
                 <span className="month-name">{getMonthName(month)}</span>
                 <span className="year-name" style={{display:'flex', gap:6, alignItems:'center'}}>
@@ -1956,10 +1952,7 @@ export default function App() {
               <button className="nav-btn" onClick={goPrevYear} disabled={(() => {
                 if (!startMonthKey) return false
                 return (year - 1) < parseMonthKey(startMonthKey).year
-              })()} style={{opacity: (() => {
-                if (!startMonthKey) return 1
-                return (year - 1) < parseMonthKey(startMonthKey).year ? 0.3 : 1
-              })()}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m15 18-6-6 6-6"/></svg></button>
+              })()}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m15 18-6-6 6-6"/></svg></button>
               <div className="month-title"><span className="month-name">{year}</span><span className="year-name">Year view · {year===realYear ? 'Current year' : year < realYear ? 'Historical' : 'Future'} {startMonthKey && year===parseMonthKey(startMonthKey).year ? `· Started ${getMonthName(parseMonthKey(startMonthKey).month)}` : ''}</span></div>
               <button className="nav-btn" onClick={goNextYear}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m9 18 6-6-6-6"/></svg></button>
             </div>
