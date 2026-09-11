@@ -10,7 +10,7 @@ import jsPDF from 'jspdf'
 const STORAGE_KEY = 'work_tracker_v1'
 // v19-D: splash version — the splash is an occasion (first run + version
 // updates), not a toll. Bump together with sw.js CACHE_NAME on every release.
-const APP_VERSION = 'daypay-v22'
+const APP_VERSION = 'daypay-v22.1'
 const START_KEY = 'work_tracker_start_v1'
 
 function formatDateKey(d) {
