@@ -715,7 +715,7 @@ export default function App() {
   function dpShowToast(toast) {
     if (dpToastTimer.current) clearTimeout(dpToastTimer.current)
     setDpToast({ ...toast, id: Date.now() })
-    dpToastTimer.current = setTimeout(() => setDpToast(null), toast.variant === 'weekend' ? 3000 : 2600)
+    dpToastTimer.current = setTimeout(() => setDpToast(null), toast.variant === 'month' ? 4000 : toast.variant === 'weekend' ? 3000 : 2600)
   }
 
   function dpCelebrateSave(key, kind, amount) {
@@ -757,9 +757,18 @@ export default function App() {
       const pm = new Date(now.getFullYear(), now.getMonth() - 1, 1)
       const mk = `${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, '0')}`
       if (mk !== localStorage.getItem('dp_motion_month')) {
-        const mTotal = Object.keys(attendance).filter(k => k.startsWith(mk + '-')).reduce((s, k) => s + attendance[k].amount, 0)
+        const recs = Object.entries(attendance).filter(([k]) => k.startsWith(mk + '-')).map(([, r]) => r)
+        const mTotal = recs.reduce((s, r) => s + (r.amount || 0), 0)
         localStorage.setItem('dp_motion_month', mk)
-        if (mTotal > 0) dpShowToast({ variant: 'month', title: `${getMonthName(pm.getMonth())} Complete`, sub: `${formatNaira(mTotal)} earned` })
+        if (mTotal > 0) {
+          // v19-B: first-of-month recap — the finished month, said in full
+          const otDays = recs.filter(r => r.isOvertime).length
+          const leaveDays = recs.filter(r => r.isLeave).length
+          const segs = [`${recs.length} day${recs.length !== 1 ? 's' : ''}`]
+          if (otDays > 0) segs.push(`${otDays} OT`)
+          if (leaveDays > 0) segs.push(`${leaveDays} on leave`)
+          dpShowToast({ variant: 'month', title: `${getMonthName(now.getMonth())} begins`, sub: `${getMonthName(pm.getMonth())}: ${formatNaira(mTotal)} · ${segs.join(' · ')}` })
+        }
       }
     } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1448,8 +1457,8 @@ export default function App() {
 
       {/* DayPay motion layer — success toast (visual only, confirmed saves only) */}
       {dpToast && (
-        <div className={`dp-toast dp-toast-${dpToast.variant}`} role="status" aria-live="polite" key={dpToast.id}>
-          {dpToast.variant === 'weekend' ? (
+        <div className={`dp-toast dp-toast-${dpToast.variant}`} role="status" aria-live="polite" key={dpToast.id} title="Tap to dismiss" onClick={() => { if (dpToastTimer.current) clearTimeout(dpToastTimer.current); setDpToast(null) }}>
+          {(dpToast.variant === 'weekend' || dpToast.variant === 'month') ? (
             <span className="dp-toast-slips" aria-hidden="true" />
           ) : (
             <span className="dp-toast-slip" aria-hidden="true" />
