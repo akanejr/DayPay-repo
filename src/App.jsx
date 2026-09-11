@@ -8,6 +8,9 @@ import { sortPeriods, migratePeriods, rateFor as rateForPeriod } from './lib/rat
 import jsPDF from 'jspdf'
 
 const STORAGE_KEY = 'work_tracker_v1'
+// v19-D: splash version — the splash is an occasion (first run + version
+// updates), not a toll. Bump together with sw.js CACHE_NAME on every release.
+const APP_VERSION = 'daypay-v19'
 const START_KEY = 'work_tracker_start_v1'
 
 function formatDateKey(d) {
@@ -278,7 +281,10 @@ export default function App() {
   const [showYearShareMenu, setShowYearShareMenu] = useState(false)
   const yearShareMenuRef = useRef(null)
 
-  const [showSplash, setShowSplash] = useState(true)
+  const [showSplash, setShowSplash] = useState(() => {
+    // v19-D: splash is an occasion (first run + version updates), not a toll
+    try { return localStorage.getItem('dp_splash_version') !== APP_VERSION } catch { return true }
+  })
   const splashStartRef = useRef(Date.now())
 
   useEffect(() => {
@@ -294,7 +300,10 @@ export default function App() {
     const elapsed = Date.now() - splashStartRef.current
     const minDuration = 3000
     const remaining = Math.max(0, minDuration - elapsed)
-    const t = setTimeout(() => setShowSplash(false), remaining)
+    const t = setTimeout(() => {
+      setShowSplash(false)
+      try { localStorage.setItem('dp_splash_version', APP_VERSION) } catch {}
+    }, remaining)
     return () => clearTimeout(t)
   }, [loaded, authLoading])
 
