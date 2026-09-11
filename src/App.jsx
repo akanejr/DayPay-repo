@@ -774,6 +774,34 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, showSplash, authLoading, syncStatus, attendance])
 
+  /* v19-C: backup nudge — one quiet banner when real data lives only on this
+     device. Never when signed in / synced; never nags (once, ever); waits its
+     turn behind the recap card. Fix is smart: sign in when sync is configured,
+     one-tap JSON export when it isn't. */
+  const [dpBackupNudge, setDpBackupNudge] = useState(false)
+  const dpBackupShownRef = useRef(false)
+  useEffect(() => {
+    if (dpBackupShownRef.current) return
+    if (!loaded || showSplash || authLoading) return
+    if (dpToast) return // one voice at a time — the recap card goes first
+    if (isSupabaseConfigured && user) return // signed in = backed up
+    if (isSupabaseConfigured && syncStatus === 'syncing') return // sync may satisfy it
+    try { if (localStorage.getItem('dp_backup_nudge') === 'done') return } catch {}
+    if (Object.keys(attendance).length < 7) return // not real data at risk yet
+    const t = setTimeout(() => {
+      dpBackupShownRef.current = true
+      try { localStorage.setItem('dp_backup_nudge', 'done') } catch {}
+      setDpBackupNudge(true)
+    }, 1200)
+    return () => clearTimeout(t)
+  }, [loaded, showSplash, authLoading, dpToast, user, syncStatus, attendance, isSupabaseConfigured]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!dpBackupNudge) return
+    if ((isSupabaseConfigured && user) || showSettings || showAuth) { setDpBackupNudge(false); return }
+    const t = setTimeout(() => setDpBackupNudge(false), 5500)
+    return () => clearTimeout(t)
+  }, [dpBackupNudge, user, showSettings, showAuth, isSupabaseConfigured]) // eslint-disable-line react-hooks/exhaustive-deps
+
   function handleCellClick(dateObj) {
     if (!dateObj) return
     if (!isEditable) return
@@ -1476,6 +1504,18 @@ export default function App() {
       {/* v19-A: quiet saves — visually-hidden confirmation for screen readers */}
       {dpQuietSay && (
         <div className="sr-only" role="status" aria-live="polite" key={dpQuietSay.id}>{dpQuietSay.text}</div>
+      )}
+
+      {/* v19-C: backup nudge — one quiet banner when data lives only on this device */}
+      {dpBackupNudge && (
+        <div className="dp-backup-nudge" role="status" onClick={()=>setDpBackupNudge(false)}>
+          <span className="dp-nudge-dot" aria-hidden="true" />
+          <p className="dp-nudge-text">
+            <b>Your {Object.keys(attendance).length} logged day{Object.keys(attendance).length!==1?'s':''} live only on this phone.</b>{' '}
+            {isSupabaseConfigured ? 'Sign in to back them up.' : 'Back them up as a file you own.'}
+          </p>
+          <button type="button" className="dp-nudge-btn" onClick={e=>{e.stopPropagation(); setDpBackupNudge(false); if (isSupabaseConfigured) { setShowAuth(true); setAuthMode('signin') } else handleExportJson()}}>Back up now</button>
+        </div>
       )}
 
       {showSplash && (
