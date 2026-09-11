@@ -1560,3 +1560,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 [data-glass="on"] .dp-backup-nudge { -webkit-backdrop-filter: blur(20px) saturate(160%); backdrop-filter: blur(20px) saturate(160%); border: 1px solid rgba(255,255,255,.16); }
 [data-glass="on"][data-theme="dark"] .dp-backup-nudge { background: rgba(12,31,20,.5); }
 [data-glass="on"][data-theme="light"] .dp-backup-nudge { background: rgba(234,246,239,.6); }
+
+/* ===== v20: payday line — one quiet line under the hero ===== */
+.payday-line { display: block; background: none; border: 0; padding: 0; margin: 6px 0 0; font-family: 'Manrope', -apple-system, sans-serif; font-size: 12.5px; line-height: 1.35; color: var(--text-3); text-align: left; cursor: pointer; }
+.payday-line b { color: var(--text); font-weight: 800; letter-spacing: -0.01em; }

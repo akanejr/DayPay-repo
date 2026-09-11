@@ -10,7 +10,7 @@ import jsPDF from 'jspdf'
 const STORAGE_KEY = 'work_tracker_v1'
 // v19-D: splash version — the splash is an occasion (first run + version
 // updates), not a toll. Bump together with sw.js CACHE_NAME on every release.
-const APP_VERSION = 'daypay-v19'
+const APP_VERSION = 'daypay-v20'
 const START_KEY = 'work_tracker_start_v1'
 
 function formatDateKey(d) {
@@ -1485,7 +1485,13 @@ export default function App() {
     }
     const daysToPayday = Math.round((paydayDate - todayMid) / 86400000)
     const projectedTotal = monthlyStats.total + projectedRemaining
-    return { paydayDay: pDay, paydayDate, daysToPayday, remainingWeekdays, projectedTotal, nextRate, ratesMixed }
+    // v20: after this month's payday passes, the line points at next month's
+    const nm = new Date(year, month + 1, 1)
+    const nmDim = new Date(nm.getFullYear(), nm.getMonth() + 1, 0).getDate()
+    const nextPDay = settings.paydayDay > 0 ? Math.min(settings.paydayDay, nmDim) : nmDim
+    const nextPaydayDate = new Date(nm.getFullYear(), nm.getMonth(), nextPDay)
+    const daysToNextPayday = Math.round((nextPaydayDate - todayMid) / 86400000)
+    return { paydayDay: pDay, paydayDate, daysToPayday, remainingWeekdays, projectedTotal, nextRate, ratesMixed, nextPaydayDate, daysToNextPayday }
   }, [year, month, realCurrentDate, settings.paydayDay, settings.ratePeriods, settings.dailyRate, monthlyStats.total, attendance, holidaysMap])
 
   return (
@@ -1808,6 +1814,17 @@ export default function App() {
                   {monthStatus==='locked' && <span className="final-badge">FINAL</span>}
                   {monthStatus==='active' && <span className="active-badge">IN PROGRESS</span>}
                 </div>
+                {monthStatus==='active' && (
+                  <button type="button" className="payday-line" onClick={()=>setSumFold(true)} aria-expanded={sumFold} title="Open details">
+                    {paydayInfo.daysToPayday > 0 ? (
+                      <b>{paydayInfo.daysToPayday} day{paydayInfo.daysToPayday!==1?'s':''} to payday</b>
+                    ) : paydayInfo.daysToPayday === 0 ? (
+                      <b>Payday today 🎉</b>
+                    ) : (
+                      <span><b>Next payday {getMonthName(paydayInfo.nextPaydayDate.getMonth(), true)} {paydayInfo.nextPaydayDate.getDate()}</b> · {paydayInfo.daysToNextPayday} day{paydayInfo.daysToNextPayday!==1?'s':''}</span>
+                    )}
+                  </button>
+                )}
                 <div className="summary-sub">
                   {displayName ? `${displayName} · ` : ''}{monthlyStats.days} day{monthlyStats.days!==1?'s':''} worked{monthlyStats.leaveDays>0 ? `, ${monthlyStats.leaveDays} on leave` : ''} {monthStatus==='locked' ? '· Locked' : monthStatus==='active' ? '· Editable' : ''} {isSupabaseConfigured && user && <span className="cloud-hint">· cloud synced</span>}
                 </div>
@@ -1818,7 +1835,7 @@ export default function App() {
                     <span className="dp-fold-title">Details</span>
                     <span className="dp-fold-sum">
                       {monthStatus==='active'
-                        ? `Projected ${formatNaira(paydayInfo.projectedTotal)} · ${paydayInfo.daysToPayday > 0 ? `${paydayInfo.daysToPayday}d to payday` : paydayInfo.daysToPayday === 0 ? 'payday today 🎉' : 'payday passed'}`
+                        ? `Projected ${formatNaira(paydayInfo.projectedTotal)}`
                         : `${monthlyStats.days} day${monthlyStats.days!==1?'s':''} worked`}
                       {settings.salaryGoal > 0 ? ` · ${goalProgress}% of goal` : ''}
                     </span>
