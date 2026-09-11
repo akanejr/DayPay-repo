@@ -10,7 +10,7 @@ import jsPDF from 'jspdf'
 const STORAGE_KEY = 'work_tracker_v1'
 // v19-D: splash version — the splash is an occasion (first run + version
 // updates), not a toll. Bump together with sw.js CACHE_NAME on every release.
-const APP_VERSION = 'daypay-v21'
+const APP_VERSION = 'daypay-v22'
 const START_KEY = 'work_tracker_start_v1'
 
 function formatDateKey(d) {
@@ -212,6 +212,25 @@ function isHolidayDayFallback(dateObj) {
   return found || null
 }
 
+/* useExit — v22 exit animations: keeps a closing panel mounted for `ms`
+   so it can animate back out the way it came. Returns { mounted, closing }.
+   Re-opening during the exit cancels it (the panel just flips back to dd-in). */
+function useExit(open, ms = 300) {
+  const [state, setState] = useState({ mounted: open, closing: false })
+  useEffect(() => {
+    if (open) {
+      if (!state.mounted || state.closing) setState({ mounted: true, closing: false })
+      return
+    }
+    if (state.mounted && !state.closing) {
+      setState({ mounted: true, closing: true })
+      const t = setTimeout(() => setState({ mounted: false, closing: false }), ms)
+      return () => clearTimeout(t)
+    }
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps — only reacts to `open` flips
+  return state
+}
+
 export default function App() {
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const [view, setView] = useState('month')
@@ -280,6 +299,15 @@ export default function App() {
 
   const [showYearShareMenu, setShowYearShareMenu] = useState(false)
   const yearShareMenuRef = useRef(null)
+
+  // v22: exit-animation state for every panel that opens and closes
+  const hambX = useExit(showHamburgerMenu, 240)
+  const shareX = useExit(showShareMenu, 240)
+  const yearShareX = useExit(showYearShareMenu, 240)
+  const settingsX = useExit(showSettings, 380)
+  const authX = useExit(showAuth, 300)
+  const recoveryX = useExit(showRecovery, 300)
+  const editX = useExit(!!editingKey, 300)
 
   const [showSplash, setShowSplash] = useState(() => {
     // v19-D: splash is an occasion (first run + version updates), not a toll
@@ -1579,7 +1607,7 @@ export default function App() {
         </div>
       )}
 
-      {!showSettings && (
+      {/* v22: the app frame stays mounted; Settings slides over it as a fixed layer */}
       <div className="phone-frame">
         <header className="header">
           <div className="header-left">
@@ -1598,10 +1626,10 @@ export default function App() {
             <button className="icon-btn hamburger-btn" onClick={()=>setShowHamburgerMenu(!showHamburgerMenu)} aria-label="Menu" title="Menu">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
             </button>
-            {showHamburgerMenu && (
-              <div className="hamburger-dropdown">
+            {hambX.mounted && (
+              <div className={`hamburger-dropdown${hambX.closing ? ' dd-out' : ' dd-in'}`}>
                 {user && displayName && (
-                  <div className="hamburger-user">
+                  <div className="hamburger-user" style={{'--i': 0}}>
                     <div className="welcome-avatar" style={{width:32, height:32, fontSize:13}}>{displayName.charAt(0).toUpperCase()}</div>
                     <div>
                       <div style={{fontWeight:700, fontSize:13}}>{displayName}</div>
@@ -1609,38 +1637,40 @@ export default function App() {
                     </div>
                   </div>
                 )}
-                <button className="hamburger-item" onClick={()=>setShowThemeMenu(v=>!v)} aria-expanded={showThemeMenu}>
+                <button className="hamburger-item" style={{'--i': 1}} onClick={()=>setShowThemeMenu(v=>!v)} aria-expanded={showThemeMenu}>
                   <span className="hamburger-icon">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z"/><path d="M19 15l.7 1.8 1.8.7-1.8.7L19 19.7l-.7-1.8-1.8-.7 1.8-.7L19 15Z"/></svg>
                   </span>
                   <span>Choose theme</span>
                   <span className={`hamburger-chev${showThemeMenu ? ' open' : ''}`} aria-hidden="true">▸</span>
                 </button>
-                {showThemeMenu && (
-                  <div className="theme-picker">
-                    {THEME_OPTIONS.map(opt => (
-                      <button type="button" key={opt.id} data-opt={opt.id} className={`theme-opt${theme===opt.id ? ' on' : ''}`} onClick={()=>setTheme(opt.id)} aria-pressed={theme===opt.id}>
-                        <span className={`theme-sw ${opt.sw}`} aria-hidden="true" />
-                        <span>{opt.label}</span>
-                        {theme===opt.id && <span className="theme-check" aria-hidden="true">✓</span>}
-                      </button>
-                    ))}
+                <div className={`theme-picker${showThemeMenu ? ' open' : ''}`}>
+                  <div className="theme-picker-inner">
+                    <div className="theme-picker-visual">
+                      {THEME_OPTIONS.map(opt => (
+                        <button type="button" key={opt.id} data-opt={opt.id} className={`theme-opt${theme===opt.id ? ' on' : ''}`} onClick={()=>setTheme(opt.id)} aria-pressed={theme===opt.id}>
+                          <span className={`theme-sw ${opt.sw}`} aria-hidden="true" />
+                          <span>{opt.label}</span>
+                          {theme===opt.id && <span className="theme-check" aria-hidden="true">✓</span>}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                )}
+                </div>
                 {isSupabaseConfigured && (
                   user ? (
-                    <button className="hamburger-item" onClick={()=>{handleLogout(); setShowHamburgerMenu(false)}}>
+                    <button className="hamburger-item" style={{'--i': 2}} onClick={()=>{handleLogout(); setShowHamburgerMenu(false)}}>
                       <span className="hamburger-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span>
                       <span>Sign out</span>
                     </button>
                   ) : (
-                    <button className="hamburger-item" onClick={()=>{setShowAuth(true); setAuthMode('signin'); setShowHamburgerMenu(false)}}>
+                    <button className="hamburger-item" style={{'--i': 2}} onClick={()=>{setShowAuth(true); setAuthMode('signin'); setShowHamburgerMenu(false)}}>
                       <span className="hamburger-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M15 3h4a5 5 0 0 1 5 5v8a5 5 0 0 1-5 5h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg></span>
                       <span>Sign in to DayPay</span>
                     </button>
                   )
                 )}
-                <button className="hamburger-item" onClick={()=>{setShowSettings(true); setShowHamburgerMenu(false)}}>
+                <button className="hamburger-item" style={{'--i': 3}} onClick={()=>{setShowSettings(true); setShowHamburgerMenu(false)}}>
                   <span className="hamburger-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 6h2.8M11.2 6H20"/><circle cx="9" cy="6" r="2.1"/><path d="M4 12h8.6M17 12h3"/><circle cx="14.8" cy="12" r="2.1"/><path d="M4 18h3.8M12.2 18H20"/><circle cx="10" cy="18" r="2.1"/></svg></span>
                   <span>Settings</span>
                 </button>
@@ -1685,6 +1715,7 @@ export default function App() {
           </div>
         </div>
 
+        <div key={view} className="view-wrap">
         {view==='month' ? (
           <>
             <div className="month-nav">
@@ -1908,9 +1939,9 @@ export default function App() {
                   Share Payslip
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" style={{marginLeft:2, opacity:.6}}><polyline points="6 9 12 15 18 9"/></svg>
                 </button>
-                {showShareMenu && (
-                  <div className="share-dropdown">
-                    <button className="share-option" onClick={shareToWhatsApp}>
+                {shareX.mounted && (
+                  <div className={`share-dropdown${shareX.closing ? ' dd-out' : ' dd-in'}`}>
+                    <button className="share-option" style={{'--i': 0}} onClick={shareToWhatsApp}>
                       <span className="share-option-icon wa">
                         <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.52.149-.174.198-.298.297-.497.1-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
                       </span>
@@ -1919,7 +1950,7 @@ export default function App() {
                         <em>PDF via share sheet · text summary fallback</em>
                       </span>
                     </button>
-                    <button className="share-option" onClick={()=>{ setShowShareMenu(false); exportPayslip() }}>
+                    <button className="share-option" style={{'--i': 1}} onClick={()=>{ setShowShareMenu(false); exportPayslip() }}>
                       <span className="share-option-icon pdf">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
                       </span>
@@ -2014,9 +2045,9 @@ export default function App() {
                   Share Yearly Summary
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" style={{marginLeft:2, opacity:.6}}><polyline points="6 9 12 15 18 9"/></svg>
                 </button>
-                {showYearShareMenu && (
-                  <div className="share-dropdown">
-                    <button className="share-option" onClick={shareYearlyToWhatsApp}>
+                {yearShareX.mounted && (
+                  <div className={`share-dropdown${yearShareX.closing ? ' dd-out' : ' dd-in'}`}>
+                    <button className="share-option" style={{'--i': 0}} onClick={shareYearlyToWhatsApp}>
                       <span className="share-option-icon wa">
                         <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.52.149-.174.198-.298.297-.497.1-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
                       </span>
@@ -2025,7 +2056,7 @@ export default function App() {
                         <em>PDF via share sheet · text summary fallback</em>
                       </span>
                     </button>
-                    <button className="share-option" onClick={()=>{ setShowYearShareMenu(false); exportYearlySummary() }}>
+                    <button className="share-option" style={{'--i': 1}} onClick={()=>{ setShowYearShareMenu(false); exportYearlySummary() }}>
                       <span className="share-option-icon pdf">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
                       </span>
@@ -2075,16 +2106,16 @@ export default function App() {
             </div>
           </>
         )}
+        </div>
 
         <div className="footer">
           <span className="footer-dot" /> {displayName ? `${displayName} · ` : ''}{settings.dailyRate.toLocaleString('en-NG')} / day · {settings.weekendMultiplier}× OT/Hol/Weekend {monthStatus==='locked' ? '· locked' : monthStatus==='active' ? '· active' : ''} {isSupabaseConfigured && user ? '· synced' : '· local'} · PWA ready · © 2026 Akaninyene
         </div>
       </div>
-      )}
 
-      {editingKey && (
-        <div className="modal-overlay" onClick={()=>{setEditingKey(null); setEditingDate(null)}}>
-          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:360}}>
+      {editX.mounted && (
+        <div className={`modal-overlay${editX.closing ? ' mo-out' : ''}`} onClick={()=>{setEditingKey(null); setEditingDate(null)}}>
+          <div className={`modal${editX.closing ? ' m-out' : ''}`} onClick={e=>e.stopPropagation()} style={{maxWidth:360}}>
             <div className="modal-header">
               <span>Edit {editingDate ? `${getMonthName(editingDate.getMonth())} ${editingDate.getDate()}, ${editingDate.getFullYear()}` : editingKey}</span>
               <button className="icon-btn small" onClick={()=>{setEditingKey(null); setEditingDate(null)}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
@@ -2132,8 +2163,8 @@ export default function App() {
         </div>
       )}
 
-      {showSettings && (
-        <div className="phone-frame sp-page">
+      {settingsX.mounted && (
+        <div className={`phone-frame sp-page${settingsX.closing ? ' sp-out' : ''}`}>
           <header className="sp-header">
             <button className="sp-back" onClick={()=>setShowSettings(false)} aria-label="Back" title="Back to app">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
@@ -2358,9 +2389,9 @@ export default function App() {
         </div>
       )}
 
-      {showAuth && (
-        <div className="modal-overlay" onClick={()=>{setShowAuth(false); setShowForgot(false); setForgotSent(false)}}>
-          <div className="modal" onClick={e=>e.stopPropagation()}>
+      {authX.mounted && (
+        <div className={`modal-overlay${authX.closing ? ' mo-out' : ''}`} onClick={()=>{setShowAuth(false); setShowForgot(false); setForgotSent(false)}}>
+          <div className={`modal${authX.closing ? ' m-out' : ''}`} onClick={e=>e.stopPropagation()}>
             <div className="modal-header">
               <div style={{display:'flex', alignItems:'center', gap:10}}>
                 <svg className="hdr-mark" viewBox="0 0 48 48" width="21" height="21" role="img" aria-label="DayPay logo">
@@ -2428,9 +2459,9 @@ export default function App() {
         </div>
       )}
 
-      {showRecovery && (
-        <div className="modal-overlay" onClick={()=>setShowRecovery(false)}>
-          <div className="modal" onClick={e=>e.stopPropagation()}>
+      {recoveryX.mounted && (
+        <div className={`modal-overlay${recoveryX.closing ? ' mo-out' : ''}`} onClick={()=>setShowRecovery(false)}>
+          <div className={`modal${recoveryX.closing ? ' m-out' : ''}`} onClick={e=>e.stopPropagation()}>
             <div className="modal-header"><span>Set new password</span><button className="icon-btn small" onClick={()=>setShowRecovery(false)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
             <div className="modal-body">
               <form onSubmit={handleRecoverySubmit}>

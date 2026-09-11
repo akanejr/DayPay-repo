@@ -71,23 +71,11 @@
     }
   }
 
-  /* ---- 3. One-shot enter animation for swapped views ---- */
-  function enterify(node) {
-    if (reduceMotion || !node || !node.classList) return;
-    if (node.classList.contains('calendar-grid') ||
-        node.classList.contains('summary-card') ||
-        node.classList.contains('year-totals') ||
-        node.classList.contains('months-list')) {
-      node.classList.remove('dp-enter');
-      void node.offsetWidth;
-      node.classList.add('dp-enter');
-    }
-  }
+  /* ---- 3. (v22: view-enter retired — App.jsx's keyed .view-wrap runs the
+     soft-rise animation on Month/Year switch; this layer no longer retriggers it) ---- */
 
   document.addEventListener('animationend', function (e) {
-    if (e.target && e.target.classList &&
-        (e.target.classList.contains('dp-enter') || e.target.classList.contains('dp-bump'))) {
-      e.target.classList.remove('dp-enter');
+    if (e.target && e.target.classList && e.target.classList.contains('dp-bump')) {
       e.target.classList.remove('dp-bump');
     }
   });
@@ -103,11 +91,6 @@
           for (var a = 0; a < mu.addedNodes.length; a++) {
             var n = mu.addedNodes[a];
             if (n.nodeType !== 1) continue;
-            enterify(n);
-            if (n.querySelectorAll) {
-              var grids = n.querySelectorAll('.calendar-grid, .summary-card, .year-totals, .months-list');
-              for (var g = 0; g < grids.length; g++) enterify(grids[g]);
-            }
           }
           needLabels = true; needAmounts = true;
         } else if (mu.type === 'characterData') {

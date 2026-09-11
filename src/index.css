@@ -136,12 +136,8 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   }
 }
 
-/* view-enter: retriggered by ux-motion.js on Month/Year switch (visual only) */
-.dp-enter { animation: dpEnter 0.32s cubic-bezier(0.16,1,0.3,1); }
-@keyframes dpEnter {
-  from { opacity: 0; transform: translateY(7px); }
-  to { opacity: 1; transform: translateY(0); }
-}
+/* view-enter: v22 — the keyed .view-wrap in App.jsx runs viewIn on every
+   Month/Year switch (one source of truth; ux-motion no longer re-triggers it) */
 
 /* value-change emphasis for hero figures (class toggled by ux-motion.js) */
 .dp-bump { animation: dpBump 0.38s cubic-bezier(0.16,1,0.3,1); transform-origin: left center; }
@@ -752,7 +748,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(11,27,50,0.42); backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  display: flex; align-items: flex-end; justify-content: center; z-index: 100; padding: 0;
+  display: flex; align-items: flex-end; justify-content: center; z-index: 1000; padding: 0;
   animation: overlayIn 0.2s ease;
 }
 @keyframes overlayIn { from { opacity: 0; } to { opacity: 1; } }
@@ -896,12 +892,8 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   box-shadow: var(--shadow-lg);
   padding: 8px;
   z-index: 50;
-  animation: dropdownIn 0.2s cubic-bezier(0.16,1,0.3,1);
 }
-@keyframes dropdownIn {
-  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
+/* (dropdownIn retired in v22 — cascade dd-in/dd-out below are the one source) */
 .hamburger-user {
   display: flex; align-items: center; gap: 10px;
   padding: 10px 12px; margin-bottom: 6px;
@@ -1144,10 +1136,16 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 /* ============================================================
    SETTINGS PAGE — dedicated screen with grouped cards (v7)
    ============================================================ */
-.sp-page { animation: spIn 0.3s cubic-bezier(0.16,1,0.3,1); }
-@keyframes spIn {
-  from { opacity: 0; transform: translateX(26px); }
-  to { opacity: 1; transform: translateX(0); }
+.sp-page {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  width: 100%; max-width: 480px; margin: 0 auto;
+  min-height: 0; z-index: 900;
+  box-shadow: 0 0 60px rgba(11,27,50,.22);
+  animation: spFullIn 340ms cubic-bezier(0.22,1,0.36,1);
+}
+@keyframes spFullIn {
+  from { transform: translateX(102%); }
+  to { transform: translateX(0); }
 }
 .sp-header {
   position: sticky; top: 0; z-index: 20;
@@ -1168,7 +1166,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .sp-title-main { font-size: 17px; font-weight: 800; letter-spacing: -0.02em; color: var(--text); }
 .sp-title-sub { font-family: 'Geist Mono', monospace; font-size: 9.5px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-3); }
 
-.sp-scroll { flex: 1; padding: 16px 16px 10px; display: flex; flex-direction: column; gap: 10px; }
+.sp-scroll { flex: 1; padding: 16px 16px 10px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; overscroll-behavior: contain; }
 .sp-section-label { font-family: 'Geist Mono', monospace; font-size: 10px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-3); margin: 8px 2px -2px; }
 .sp-card { background: var(--bg-elevated); border: 1px solid var(--border-light); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden; }
 
@@ -1506,7 +1504,11 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 /* ===== v18: "Choose theme" inline picker (hamburger menu) ===== */
 .hamburger-item .hamburger-chev { margin-left: auto; font-size: 11px; color: var(--text-3); transition: transform 0.15s ease; }
 .hamburger-item .hamburger-chev.open { transform: rotate(90deg); }
-.theme-picker { display: flex; flex-direction: column; gap: 4px; margin: 2px 0 6px; padding: 6px; background: var(--bg-elevated-2); border-radius: 10px; }
+/* v22: always mounted, expands/collapses smoothly (grid-rows transition) */
+.theme-picker { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 260ms cubic-bezier(0.22,1,0.36,1); }
+.theme-picker.open { grid-template-rows: 1fr; }
+.theme-picker-inner { overflow: hidden; min-height: 0; }
+.theme-picker-visual { display: flex; flex-direction: column; gap: 4px; padding: 6px; background: var(--bg-elevated-2); border-radius: 10px; }
 .theme-opt { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: transparent; color: var(--text-2); font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 8px 10px; border-radius: 8px; cursor: pointer; text-align: left; transition: background 0.13s, color 0.13s; }
 .theme-opt:hover { background: var(--bg-cell-hover); color: var(--text); }
 .theme-opt.on { color: var(--green-ink); background: var(--green-wash); font-weight: 700; }
@@ -1574,4 +1576,69 @@ button:not(#dp-press-skip):active:not(:disabled) { transform: scale(0.96); }
 @media (prefers-reduced-motion: reduce) {
   button:not(#dp-press-skip):active:not(:disabled), .cell:not(#dp-press-skip):active:not(.empty):not(.locked-cell):not(:disabled) { transform: none; opacity: 0.75; }
   button:not(#dp-press-skip):hover:not(:disabled) { transform: none; }
+}
+
+/* ===== v22: panels that move — one motion language =====
+   Soft rise for views (keyed .view-wrap), cascade for menus,
+   full-page slide for Settings, reverse-out for everything.
+   ~300ms, one deceleration curve: cubic-bezier(0.22,1,0.36,1).
+   Closing elements get pointer-events:none so a dying menu can
+   never swallow the next tap. */
+
+/* 1 · Month/Year view switch — soft rise */
+.view-wrap { animation: viewIn 300ms cubic-bezier(0.22,1,0.36,1); }
+@keyframes viewIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 2 · Menus — cascade: container drops in fast, items ripple after */
+.dd-in { animation: ddIn 200ms ease; }
+.dd-out { animation: ddOut 220ms ease forwards; pointer-events: none; }
+@keyframes ddIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes ddOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-8px); }
+}
+.dd-in .hamburger-user,
+.dd-in .hamburger-item {
+  animation: ddItemIn 340ms cubic-bezier(0.22,1,0.36,1) both;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+.dd-in .share-option {
+  animation: ddItemIn 340ms cubic-bezier(0.22,1,0.36,1) both;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+@keyframes ddItemIn {
+  from { opacity: 0; transform: translateY(-7px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 3 · Modals — reverse out the way they came */
+.modal-overlay.mo-out { animation: overlayOut 200ms ease forwards; pointer-events: none; }
+@keyframes overlayOut { from { opacity: 1; } to { opacity: 0; } }
+.modal.m-out { animation: slideDown 260ms cubic-bezier(0.22,1,0.36,1) forwards; }
+@keyframes slideDown {
+  from { transform: translateY(0); opacity: 1; }
+  to { transform: translateY(16px); opacity: 0; }
+}
+
+/* 4 · Settings — full page slides back out */
+.sp-page.sp-out { animation: spFullOut 380ms cubic-bezier(0.22,1,0.36,1) forwards; pointer-events: none; }
+@keyframes spFullOut {
+  from { transform: translateX(0); }
+  to { transform: translateX(102%); }
+}
+
+/* 5 · Future chips block — enters with the same soft rise */
+.future-chips-block { animation: viewIn 260ms cubic-bezier(0.22,1,0.36,1); }
+
+/* reduced motion — views crossfade, nothing moves */
+@media (prefers-reduced-motion: reduce) {
+  .view-wrap { animation: dpViewRM 200ms ease; }
+  @keyframes dpViewRM { from { opacity: 0; } to { opacity: 1; } }
+  .theme-picker { transition: none; }
 }
