@@ -10,7 +10,7 @@ import jsPDF from 'jspdf'
 const STORAGE_KEY = 'work_tracker_v1'
 // v19-D: splash version — the splash is an occasion (first run + version
 // updates), not a toll. Bump together with sw.js CACHE_NAME on every release.
-const APP_VERSION = 'daypay-v22.1'
+const APP_VERSION = 'daypay-v22.2'
 const START_KEY = 'work_tracker_start_v1'
 
 function formatDateKey(d) {
@@ -309,10 +309,13 @@ export default function App() {
   const recoveryX = useExit(showRecovery, 300)
   const editX = useExit(!!editingKey, 300)
 
-  const [showSplash, setShowSplash] = useState(() => {
-    // v19-D: splash is an occasion (first run + version updates), not a toll
-    try { return localStorage.getItem('dp_splash_version') !== APP_VERSION } catch { return true }
+  const [splashMode] = useState(() => {
+    // v22.2: splash every launch — the full scene is an occasion (first run +
+    // version updates, and it signals "something changed"); routine opens get
+    // a quick ~1s brand flash so the app still feels alive, never slow
+    try { return localStorage.getItem('dp_splash_version') === APP_VERSION ? 'quick' : 'full' } catch { return 'full' }
   })
+  const [showSplash, setShowSplash] = useState(true)
   const splashStartRef = useRef(Date.now())
 
   useEffect(() => {
@@ -326,14 +329,14 @@ export default function App() {
     if (!loaded) return
     if (authLoading && isSupabaseConfigured) return
     const elapsed = Date.now() - splashStartRef.current
-    const minDuration = 3000
+    const minDuration = splashMode === 'quick' ? 1100 : 3000
     const remaining = Math.max(0, minDuration - elapsed)
     const t = setTimeout(() => {
       setShowSplash(false)
       try { localStorage.setItem('dp_splash_version', APP_VERSION) } catch {}
     }, remaining)
     return () => clearTimeout(t)
-  }, [loaded, authLoading])
+  }, [loaded, authLoading, splashMode])
 
   const [realCurrentDate, setRealCurrentDate] = useState(() => new Date())
   useEffect(() => {
@@ -1562,7 +1565,18 @@ export default function App() {
       )}
 
       {showSplash && (
-        <div className="daypay-splash">
+        <div className={`daypay-splash${splashMode === 'quick' ? ' quick' : ''}`}>
+          {splashMode === 'quick' ? (
+            <div className="splash-content">
+              <div className="splash-quick">
+                <svg viewBox="0 0 48 48" width="46" height="46" role="img" aria-label="DayPay logo">
+                  <rect x="15" y="16" width="26" height="26" rx="7" fill="var(--daypay-green)"/>
+                  <rect x="7" y="8" width="26" height="26" rx="7" fill={isDarkAppearance ? '#0D1424' : '#FFFFFF'} stroke={isDarkAppearance ? '#2A3550' : '#0B1B32'} strokeWidth="4"/>
+                </svg>
+                <span className="splash-quick-word"><span className="wm-day">Day</span><span className="wm-pay">Pay</span></span>
+              </div>
+            </div>
+          ) : (
           <div className="splash-content">
             <div className="splash-scene" aria-hidden="true">
               <svg className="splash-cal" viewBox="0 0 170 172" width="168" height="170">
@@ -1604,6 +1618,7 @@ export default function App() {
               <span className="splash-year">{realCurrentDate.getFullYear()}</span>
             </div>
           </div>
+          )}
         </div>
       )}
 

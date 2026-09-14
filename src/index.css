@@ -939,6 +939,15 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 @keyframes splashFadeOut {
   to { opacity: 0; pointer-events: none; visibility: hidden; }
 }
+/* v22.2: quick brand flash on routine opens (~1.15s total) */
+.daypay-splash.quick { animation: splashFadeOut 0.3s ease 0.85s forwards; }
+.daypay-splash.quick .splash-content { animation: quickSettle 480ms cubic-bezier(0.22,1,0.36,1); }
+.splash-quick { display: flex; flex-direction: column; align-items: center; gap: 13px; }
+.splash-quick-word { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; }
+@keyframes quickSettle {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
 .splash-scene { display: flex; align-items: center; justify-content: center; }
 .splash-cal {
   animation: splashCal 3s cubic-bezier(0.16,1,0.3,1) both;
@@ -1036,6 +1045,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   }
   .dp-enter { animation: none; }
   .daypay-splash { animation: splashFadeOut 0.2s ease 2.2s forwards; }
+  .daypay-splash.quick { animation: splashFadeOut 0.2s ease 0.45s forwards; }
 }
 
 /* Payday countdown + projection (salaried month tracking) */
