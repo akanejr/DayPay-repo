@@ -922,106 +922,52 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: splashFadeOut 0.4s ease 3s forwards;
+  animation: splashFadeOut 0.4s ease 5s forwards;
 }
-.splash-content {
+/* v23.4 — solo splash: animated logo + wordmark + motto, nothing else.
+   One-shot choreography (~1.4s): the slip settles in, the green peek
+   slides in from behind it, then wordmark and motto rise up — a calm
+   hold for the rest of the 3s. No looping motion. */
+.splash-solo {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 20px;
+  gap: 18px;
   padding: 24px;
-  animation: splashContentIn 0.6s cubic-bezier(0.16,1,0.3,1);
 }
-@keyframes splashContentIn {
-  from { opacity: 0; transform: translateY(14px) scale(0.97); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+.splash-solo-logo { overflow: visible; }
+.splash-solo-logo .ssq-white,
+.splash-solo-logo .ssq-green { transform-box: fill-box; transform-origin: center; }
+.ssq-white { opacity: 0; animation: ssqIn 440ms cubic-bezier(0.22,1,0.36,1) 80ms forwards; }
+.ssq-green { opacity: 0; animation: ssqPeek 520ms cubic-bezier(0.22,1,0.36,1) 300ms forwards; }
+@keyframes ssqIn {
+  from { opacity: 0; transform: scale(0.88); }
+  to { opacity: 1; transform: scale(1); }
 }
-@keyframes splashFadeOut {
-  to { opacity: 0; pointer-events: none; visibility: hidden; }
+@keyframes ssqPeek {
+  from { opacity: 0; transform: translate(16px, 16px); }
+  to { opacity: 1; transform: translate(0, 0); }
 }
-/* v22.2: quick brand flash on routine opens (~1.15s total) */
-.daypay-splash.quick { animation: splashFadeOut 0.3s ease 0.85s forwards; }
-.daypay-splash.quick .splash-content { animation: quickSettle 480ms cubic-bezier(0.22,1,0.36,1); }
-.splash-quick { display: flex; flex-direction: column; align-items: center; gap: 13px; }
-.splash-quick-word { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; }
-@keyframes quickSettle {
-  from { opacity: 0; transform: translateY(10px) scale(0.97); }
-  to { opacity: 1; transform: none; }
-}
-.splash-scene { display: flex; align-items: center; justify-content: center; }
-.splash-cal {
-  animation: splashCal 3s cubic-bezier(0.16,1,0.3,1) both;
-  transform-box: view-box;
-  transform-origin: 85px 88px;
-}
-.sc-ring { fill: none; stroke: var(--border); stroke-width: 2.5; }
-.sc-body { fill: #FFFFFF; stroke: var(--border); stroke-width: 2; }
-[data-theme="dark"] .sc-body { fill: #0D1424; }
-.sc-head, .sc-head2 { fill: #0B1B32; }
-[data-theme="dark"] .sc-head, [data-theme="dark"] .sc-head2 { fill: #1A2440; }
-.sc-dot { fill: var(--daypay-green); }
-.sc-pend {
-  fill: none; stroke: var(--border); stroke-width: 1.6; stroke-dasharray: 3 3;
-  animation: splashPend 0.4s ease 0.9s both;
-}
-.sc-cell {
-  opacity: 0;
-  transform-box: view-box;
-  animation: splashStamp 0.38s cubic-bezier(0.34,1.56,0.64,1) both;
-}
-.sc-cell rect { fill: var(--green-wash); }
-.sc-cell text {
-  font-weight: 800; font-size: 10.5px; fill: var(--daypay-green);
-  text-anchor: middle; dominant-baseline: central;
-}
-.sc-wknd rect { fill: #F2F8F4; }
-[data-theme="dark"] .sc-wknd rect { fill: #0B1220; }
-.sc-ot rect { fill: var(--amber-wash); }
-.sc-ot text { fill: var(--amber); }
-@keyframes splashCal {
-  0% { opacity: 0; transform: translateY(12px) scale(0.95); }
-  12% { opacity: 1; transform: translateY(0) scale(1); }
-  78% { transform: translateY(0) scale(1); }
-  83% { transform: translateY(0) scale(1.045); }
-  89% { transform: translateY(0) scale(1); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
-}
-@keyframes splashStamp {
-  0% { opacity: 0; transform: scale(0.3); }
-  80% { opacity: 1; transform: scale(1.06); }
-  100% { opacity: 1; transform: scale(1); }
-}
-@keyframes splashPend {
-  from { opacity: 0; }
-  to { opacity: 1; }
+.splash-solo-word {
+  font-size: 32px; font-weight: 800; letter-spacing: -0.02em;
+  opacity: 0; animation: soloUp 460ms cubic-bezier(0.22,1,0.36,1) 700ms forwards;
 }
 .splash-tagline {
   font-weight: 500; font-size: 15px;
   color: var(--text-2);
   letter-spacing: 0.01em; text-align: center;
 }
-.splash-loader { display: flex; gap: 7px; margin-top: 8px; align-items: center; }
-.loader-dot {
-  width: 9px; height: 9px; border-radius: 3px;
-  animation: loaderSlip 1.2s infinite ease-in-out both;
+.splash-solo .splash-tagline {
+  opacity: 0; animation: soloUp 460ms cubic-bezier(0.22,1,0.36,1) 920ms forwards;
 }
-.loader-dot:nth-child(1) { animation-delay: -0.32s; background: transparent; border: 2px solid var(--daypay-navy); }
-[data-theme="dark"] .loader-dot:nth-child(1) { border-color: #DCE4F2; }
-.loader-dot:nth-child(2) { animation-delay: -0.16s; background: var(--daypay-green); }
-.loader-dot:nth-child(3) { background: var(--amber); }
-@keyframes loaderSlip {
-  0%, 80%, 100% { transform: translateY(0) scale(0.82); opacity: 0.55; }
-  40% { transform: translateY(-4px) scale(1); opacity: 1; }
+@keyframes soloUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
-.splash-footer {
-  margin-top: 24px; display: flex; align-items: center; gap: 6px;
-  font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+@media (prefers-reduced-motion: reduce) {
+  .splash-solo-logo .ssq-white, .splash-solo-logo .ssq-green,
+  .splash-solo-word, .splash-solo .splash-tagline { animation: none; opacity: 1; transform: none; }
 }
-.splash-navy { color: var(--daypay-navy); }
-[data-theme="dark"] .splash-navy { color: #ffffff; }
-.splash-green { color: var(--daypay-green); font-weight: 800; }
-.splash-dot { color: var(--text-4); margin: 0 2px; }
-.splash-year { color: var(--text-3); font-weight: 500; font-variant-numeric: tabular-nums; }
 
 /* ---------- small screens ---------- */
 @media (max-width: 380px) {
@@ -1044,8 +990,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
     transition-duration: 0.001s !important;
   }
   .dp-enter { animation: none; }
-  .daypay-splash { animation: splashFadeOut 0.2s ease 2.2s forwards; }
-  .daypay-splash.quick { animation: splashFadeOut 0.2s ease 0.45s forwards; }
+  .daypay-splash { animation: splashFadeOut 0.4s ease 4.6s forwards; }
 }
 
 /* Payday countdown + projection (salaried month tracking) */
@@ -1182,7 +1127,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
    to 0, so on short/mobile viewports they squashed instead of scrolling.
    Keep every section at its natural height; the column scrolls. */
 .sp-scroll > * { flex-shrink: 0; }
-.sp-section-label { font-family: 'Geist Mono', monospace; font-size: 10px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-3); margin: 8px 2px -2px; }
+.sp-section-label { font-family: 'Geist Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-2); margin: 10px 2px -2px; }
 .sp-card { background: var(--bg-elevated); border: 1px solid var(--border-light); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden; }
 
 /* profile card */
@@ -1657,3 +1602,212 @@ button:not(#dp-press-skip):active:not(:disabled) { transform: scale(0.96); }
   @keyframes dpViewRM { from { opacity: 0; } to { opacity: 1; } }
   .theme-picker { transition: none; }
 }
+
+/* ============================================================
+   v23 · Reminders — settings card, switch, day chips, nudge
+   ============================================================ */
+
+/* Onboarding nudge — same shell as the backup nudge, bell-green dot */
+
+/* Switch (reminder toggle in Settings) */
+.sp-switch {
+  position: relative;
+  width: 44px; height: 26px;
+  border-radius: 999px;
+  border: 1.5px solid var(--border-strong);
+  background: var(--surface-2, #f3f4f6);
+  cursor: pointer;
+  padding: 0;
+  transition: background 180ms ease, border-color 180ms ease;
+  flex: none;
+}
+.sp-switch-knob {
+  position: absolute;
+  top: 50%; left: 3px;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 1px solid var(--border-strong);
+  transform: translateY(-50%);
+  transition: transform 180ms cubic-bezier(0.22,1,0.36,1);
+}
+.sp-switch.on { background: var(--daypay-green); border-color: var(--daypay-green); }
+.sp-switch.on .sp-switch-knob { transform: translate(17px, -50%); border-color: var(--daypay-green); }
+
+/* Reminder body (shown when the switch is on) */
+.sp-rem-body {
+  display: flex; flex-direction: column; gap: 12px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+}
+.sp-rem-label {
+  font-size: 11px; font-weight: 700;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-3);
+}
+.sp-rem-days { display: flex; gap: 6px; flex-wrap: wrap; }
+.sp-rem-day {
+  min-width: 40px;
+  padding: 7px 0;
+  text-align: center;
+  font-size: 12px; font-weight: 600;
+  font-family: 'Manrope', sans-serif;
+  color: var(--text-2);
+  background: transparent;
+  border: 1.5px solid var(--border);
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease, transform 120ms ease;
+}
+.sp-rem-day:active { transform: scale(0.94); }
+.sp-rem-day.on {
+  background: var(--daypay-navy);
+  border-color: var(--daypay-navy);
+  color: #ffffff;
+}
+.sp-rem-time-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sp-rem-time {
+  font-family: 'Geist Mono', monospace;
+  font-size: 14px; font-weight: 600;
+  color: var(--text);
+  background: transparent;
+  border: 1.5px solid var(--border);
+  border-radius: 9px;
+  padding: 7px 10px;
+}
+.sp-rem-summary { font-size: 11px; color: var(--text-3); }
+.sp-rem-delivery { display: flex; flex-direction: column; gap: 8px; }
+.sp-rem-btn {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 13px; font-weight: 700;
+  font-family: 'Manrope', sans-serif;
+  color: #ffffff;
+  background: var(--daypay-green);
+  border: 1.5px solid var(--daypay-green);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: filter 150ms ease, transform 120ms ease, opacity 150ms ease;
+}
+.sp-rem-btn:active { transform: scale(0.98); }
+.sp-rem-btn:disabled { opacity: 0.55; cursor: default; transform: none; }
+.sp-rem-btn.ghost {
+  background: transparent;
+  color: var(--daypay-green);
+  border-style: dashed;
+}
+.sp-rem-btn.alarm {
+  background: var(--daypay-navy);
+  border-color: var(--daypay-navy);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sp-switch, .sp-switch-knob, .sp-rem-day, .sp-rem-btn { transition: none; }
+}
+
+/* ============================================================
+   v23.1 · Settings — category structure
+   Main list (profile card + 6 category cards) + category pages.
+   Same premium card language; new classes only, nothing
+   existing restyled.
+   ============================================================ */
+.sp-prof-card,
+.sp-cat-card {
+  width: 100%;
+  display: flex; align-items: center; gap: 12px;
+  text-align: left;
+  font-family: inherit; color: var(--text);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 12px 13px;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.sp-prof-card:active, .sp-cat-card:active { transform: scale(0.977); }
+.sp-neutral-avatar {
+  display: inline-grid; place-items: center;
+  border-radius: 50%;
+  background: var(--bg-sunken);
+  border: 2px solid var(--border);
+  color: var(--text-2);
+  box-shadow: var(--shadow-sm);
+  flex: none;
+}
+.sp-prof-avatar { border-radius: 50%; }
+.sp-prof-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sp-prof-name { font-size: 14px; font-weight: 800; letter-spacing: -0.01em; }
+.sp-prof-sub { font-size: 10.5px; color: var(--text-3); }
+.sp-card-chev { margin-left: auto; flex: none; display: grid; place-items: center; color: var(--text-4); }
+.sp-cat-ico { width: 20px; height: 20px; flex: none; display: grid; place-items: center; color: var(--text); }
+.sp-cat-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.sp-cat-line { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.sp-cat-name { font-size: 13.5px; font-weight: 800; letter-spacing: -0.01em; flex: none; }
+.sp-cat-desc { font-size: 11px; color: var(--text-3); line-height: 1.4; }
+.sp-cat-sum {
+  margin-left: auto; flex: none;
+  max-width: 62%; overflow: hidden; text-overflow: ellipsis;
+  font-size: 10.5px; color: var(--text-2);
+  font-family: 'Geist Mono', monospace;
+  white-space: nowrap;
+}
+/* category page */
+.sp-crumb { font-size: 11.5px; font-weight: 700; color: var(--text-3); letter-spacing: 0.02em; }
+.sp-cat-anim { animation: viewIn 240ms cubic-bezier(0.22, 1, 0.36, 1); }
+/* Earnings — current rate card */
+.sp-rate-card { display: flex; flex-direction: column; gap: 3px; }
+.sp-rate-cap {
+  display: flex; align-items: center; gap: 8px;
+  font-family: 'Geist Mono', monospace;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-3);
+}
+.sp-rate-big { font-size: 22px; font-weight: 800; font-family: 'Geist Mono', monospace; color: var(--daypay-green); }
+.sp-rate-big em { font-style: normal; font-size: 12px; font-weight: 500; color: var(--text-3); }
+/* About */
+.sp-about { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 12px 2px 4px; }
+.sp-about-word { font-size: 24px; font-weight: 800; letter-spacing: -0.02em; margin-top: 6px; color: var(--text); }
+.sp-about-tag { font-size: 11.5px; color: var(--text-3); }
+.sp-about-ver {
+  margin-top: 6px;
+  font-size: 10.5px; font-weight: 600; font-family: 'Geist Mono', monospace;
+  color: var(--text);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 999px; padding: 4px 11px;
+}
+.sp-about-card { width: 100%; margin-top: 12px; }
+.sp-about-copy { margin-top: 16px; padding: 12px 10px 6px; font-size: 10px; color: var(--text-4); line-height: 1.6; }
+@media (prefers-reduced-motion: reduce) {
+  .sp-prof-card, .sp-cat-card { transition: none; }
+  .sp-cat-anim { animation: none; }
+}
+
+/* v23.1b — Earnings clarity: stronger row type + visible input fields */
+.sp-row-plain .sp-row-title { font-size: 14px; font-weight: 800; }
+.sp-row-plain .sp-row-sub { font-size: 11.5px; }
+.sp-input-lg-wrap { border-color: var(--border); background: var(--bg-elevated); padding: 9px 13px; }
+/* About — professional description */
+.sp-about-desc { font-size: 12px; line-height: 1.65; color: var(--text-2); max-width: 330px; margin-top: 2px; padding: 0 4px; }
+
+/* v23.2 · reminder onboarding pop card */
+.dp-rem-pop { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 12px; }
+.dp-rem-pop-icon {
+  width: 52px; height: 52px; border-radius: 50%;
+  background: var(--bg-sunken); border: 1px solid var(--border-light);
+  color: var(--daypay-green);
+  display: grid; place-items: center;
+}
+.dp-rem-pop-text { font-size: 13px; line-height: 1.55; color: var(--text-2); max-width: 300px; }
+.dp-rem-steps { list-style: none; display: flex; flex-direction: column; gap: 8px; margin: 2px 0; width: 100%; }
+.dp-rem-steps li { display: flex; align-items: center; gap: 10px; text-align: left; font-size: 12.5px; color: var(--text-2); line-height: 1.4; }
+.dp-rem-step-num {
+  width: 21px; height: 21px; border-radius: 50%; flex: none;
+  background: var(--daypay-green); color: #fff;
+  font-size: 11px; font-weight: 800; font-family: 'Geist Mono', monospace;
+  display: grid; place-items: center;
+}
+.dp-rem-actions { display: flex; flex-direction: column; gap: 8px; width: 100%; margin-top: 4px; }
+.dp-rem-note { font-size: 10.5px; color: var(--text-3); line-height: 1.5; }
+.dp-rem-dont { margin-top: 2px; font-size: 11.5px; }

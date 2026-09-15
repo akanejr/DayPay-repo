@@ -5,12 +5,14 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
 import { sortPeriods, migratePeriods, rateFor as rateForPeriod } from './lib/rates'
+import { normalizeReminder, nextReminder, describeReminder, buildReminderIcs } from './lib/reminders'
 import jsPDF from 'jspdf'
 
 const STORAGE_KEY = 'work_tracker_v1'
 // v19-D: splash version — the splash is an occasion (first run + version
 // updates), not a toll. Bump together with sw.js CACHE_NAME on every release.
-const APP_VERSION = 'daypay-v22.2'
+const APP_VERSION = 'daypay-v23'
+const appVersionNum = (APP_VERSION.match(/v([\d.]+)/) || [])[1] || '' // v23.1: "23" for the About page
 const START_KEY = 'work_tracker_start_v1'
 
 function formatDateKey(d) {
@@ -74,6 +76,7 @@ function buildDayPayBackup(attendance, settings, leaveTypes) {
       startMonthKey: settings.startMonthKey ?? null,
       ratePeriods: settings.ratePeriods ?? [],
       leaveTypes,
+      reminder: settings.reminder ?? null,
     },
     summary: {
       days: records.length,
@@ -231,19 +234,61 @@ function useExit(open, ms = 300) {
   return state
 }
 
+/* v23.1 — neutral person avatar for Settings (no photos by design). */
+function NeutralAvatar({ size = 46 }) {
+  return (
+    <span className="sp-neutral-avatar" style={{ width: size, height: size }} aria-hidden="true">
+      <svg viewBox="0 0 24 24" width={Math.round(size * 0.52)} height={Math.round(size * 0.52)} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+        <circle cx="12" cy="8.2" r="3.6" />
+        <path d="M4.8 19.6c1.4-3.2 4-4.8 7.2-4.8s5.8 1.6 7.2 4.8" />
+      </svg>
+    </span>
+  )
+}
+
+// v23.1 — compact reminder-day summary for Settings ("Mon–Fri", "Wed · Sat–Sun", …)
+function remDaysShort(days) {
+  if (!days || !days.length) return 'no days'
+  if (days.length === 7) return 'Every day'
+  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  const order = [1, 2, 3, 4, 5, 6, 0] // Monday-first
+  const inSet = d => days.includes(d)
+  let out = ''
+  let i = 0
+  while (i < 7) {
+    if (!inSet(order[i])) { i += 1; continue }
+    let j = i
+    while (j + 1 < 7 && inSet(order[j + 1])) j += 1
+    out += (out ? ' · ' : '') + (i === j ? names[order[i]] : `${names[order[i]]}–${names[order[j]]}`)
+    i = j + 1
+  }
+  return out
+}
+// v23.1 — "18:00" → "6:00 PM" (local time, as stored)
+function time12(t) {
+  const [h, m] = String(t || '').split(':').map(Number)
+  if (isNaN(h) || isNaN(m)) return t || ''
+  const ap = h >= 12 ? 'PM' : 'AM'
+  const hh = h % 12 === 0 ? 12 : h % 12
+  return `${hh}:${String(m).padStart(2, '0')} ${ap}`
+}
+
 export default function App() {
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const [view, setView] = useState('month')
   const [attendance, setAttendance] = useState({})
-  const [settings, setSettings] = useState({ dailyRate: 16000, weekendMultiplier: 2, holidayMultiplier: 2, salaryGoal: 500000, paydayDay: 0, ratePeriods: [] })
+  const [settings, setSettings] = useState({ dailyRate: 16000, weekendMultiplier: 2, holidayMultiplier: 2, salaryGoal: 500000, paydayDay: 0, ratePeriods: [], reminder: null })
   const [startMonthKey, setStartMonthKey] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [spCat, setSpCat] = useState(null) // v23.1: open settings category page (null = main list)
+  const spCatInitRef = useRef(null) // v23.2: deep-link a category when opening Settings (e.g. 'reminders')
+  const [earnHistoryOpen, setEarnHistoryOpen] = useState(false) // v23.1: rate history open on Earnings page
   const [showFutureDays, setShowFutureDays] = useState(false)
   const [goalInput, setGoalInput] = useState('500000')
   const [paydayInput, setPaydayInput] = useState('0')
   const [rateDraft, setRateDraft] = useState(null) // draft rate periods while Settings is open (applied on Save)
   const [rateForm, setRateForm] = useState(null)   // { from, rate } — the "Add rate change" inline form
-  const [spFold, setSpFold] = useState({ pay: false, track: false }) // v18 settings tidy: collapsed sections
+  const [spFold, setSpFold] = useState({ pay: false }) // v18 settings tidy: collapsed sections (v23.1: pay rates only)
   const [sumFold, setSumFold] = useState(false) // v18 month page: details collapsed by default
   const [ltDraft, setLtDraft] = useState(null)
   const [loaded, setLoaded] = useState(false)
@@ -309,12 +354,6 @@ export default function App() {
   const recoveryX = useExit(showRecovery, 300)
   const editX = useExit(!!editingKey, 300)
 
-  const [splashMode] = useState(() => {
-    // v22.2: splash every launch — the full scene is an occasion (first run +
-    // version updates, and it signals "something changed"); routine opens get
-    // a quick ~1s brand flash so the app still feels alive, never slow
-    try { return localStorage.getItem('dp_splash_version') === APP_VERSION ? 'quick' : 'full' } catch { return 'full' }
-  })
   const [showSplash, setShowSplash] = useState(true)
   const splashStartRef = useRef(Date.now())
 
@@ -329,14 +368,10 @@ export default function App() {
     if (!loaded) return
     if (authLoading && isSupabaseConfigured) return
     const elapsed = Date.now() - splashStartRef.current
-    const minDuration = splashMode === 'quick' ? 1100 : 3000
-    const remaining = Math.max(0, minDuration - elapsed)
-    const t = setTimeout(() => {
-      setShowSplash(false)
-      try { localStorage.setItem('dp_splash_version', APP_VERSION) } catch {}
-    }, remaining)
+    const remaining = Math.max(0, 5000 - elapsed) // v23.5: solo splash holds a full 5s on every open
+    const t = setTimeout(() => setShowSplash(false), remaining)
     return () => clearTimeout(t)
-  }, [loaded, authLoading, splashMode])
+  }, [loaded, authLoading])
 
   const [realCurrentDate, setRealCurrentDate] = useState(() => new Date())
   useEffect(() => {
@@ -454,7 +489,10 @@ export default function App() {
       const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
       setRateDraft(migratePeriods(settings.ratePeriods, s, earliest, monthStart))
       setRateForm(null)
-      setSpFold({ pay: false, track: false })
+      setSpFold({ pay: false })
+      setSpCat(spCatInitRef.current || null) // v23.1: land on the main list — or a deep-linked category (v23.2)
+      spCatInitRef.current = null
+      setEarnHistoryOpen(false)
     }
   }, [showSettings]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -476,7 +514,8 @@ export default function App() {
             holidayMultiplier: parsed.settings.holidayMultiplier ?? 2,
             salaryGoal: parsed.settings.salaryGoal ?? 500000,
             paydayDay: parsed.settings.paydayDay ?? 0,
-            startMonthKey: parsed.settings.startMonthKey
+            startMonthKey: parsed.settings.startMonthKey,
+            reminder: normalizeReminder(parsed.settings.reminder)
           }
           const earliest = Object.keys(parsed.attendance || {}).sort()[0]
           const now = new Date()
@@ -569,6 +608,7 @@ export default function App() {
           cs.ratePeriods = migratePeriods(mergedSettings.ratePeriods, cs, earliestCloud, `${nowCloud.getFullYear()}-${String(nowCloud.getMonth() + 1).padStart(2, '0')}-01`)
           const rtc = rateForPeriod(cs.ratePeriods, formatDateKey(nowCloud), cs)
           cs.dailyRate = rtc.dailyRate; cs.weekendMultiplier = rtc.weekendMultiplier; cs.holidayMultiplier = rtc.holidayMultiplier
+          cs.reminder = normalizeReminder(mergedSettings.reminder)
           setSettings(cs)
           setGoalInput(String(mergedSettings.salaryGoal ?? 500000))
           setPaydayInput(String(mergedSettings.paydayDay ?? 0))
@@ -842,6 +882,142 @@ export default function App() {
     return () => clearTimeout(t)
   }, [dpBackupNudge, user, showSettings, showAuth, isSupabaseConfigured]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* ============================================================
+     v23: Reminders — DayPay rings for you to open the app and log.
+     Config lives in settings.reminder (cloud-synced with everything
+     else). Two delivery paths: in-app/web notification (works while
+     the app is open / installed) + a "make it a real alarm" .ics
+     import that rings via the phone's own calendar alarm system.
+     ============================================================ */
+  const remTimerRef = useRef(null)
+  const remLastFiredRef = useRef(null)
+  const [notifPerm, setNotifPerm] = useState(() => {
+    try { return ('Notification' in window) ? Notification.permission : 'unsupported' } catch { return 'unsupported' }
+  })
+
+  const reminder = normalizeReminder(settings.reminder)
+
+  function dpReminderPatch(patch) {
+    setSettings(s => ({ ...s, reminder: { ...normalizeReminder(s.reminder), ...patch } }))
+  }
+
+  function toggleReminder() {
+    if (reminder.enabled) {
+      dpReminderPatch({ enabled: false })
+      dpShowToast({ title: 'Reminder off' })
+    } else {
+      const days = reminder.days.length ? reminder.days : [1, 2, 3, 4, 5]
+      dpReminderPatch({ enabled: true, days })
+      dpShowToast({ title: 'Reminder on', sub: 'Pick your days and time' })
+    }
+  }
+
+  function toggleRemDay(d) {
+    const days = reminder.days.includes(d)
+      ? reminder.days.filter(x => x !== d)
+      : [...reminder.days, d].sort((a, b) => a - b)
+    dpReminderPatch({ days })
+  }
+
+  function dpFireReminderNotification() {
+    try {
+      if (!('Notification' in window) || Notification.permission !== 'granted') return
+      const n = new Notification('DayPay — log your day', {
+        body: 'Time to open DayPay and stamp today’s work.',
+        icon: '/daypay-icon-512.png',
+        badge: '/daypay-icon-512.png',
+        tag: 'daypay-reminder',
+      })
+      n.onclick = () => { window.focus(); n.close() }
+    } catch {}
+  }
+
+  async function dpRequestNotifPermission() {
+    if (!('Notification' in window)) {
+      dpShowToast({ title: 'Not supported here', sub: 'The calendar alarm still works' })
+      return
+    }
+    const p = await Notification.requestPermission()
+    setNotifPerm(p)
+    if (p === 'granted') dpShowToast({ title: 'Notifications on', sub: 'Try the test button' })
+    else if (p === 'denied') dpShowToast({ title: 'Blocked in your browser', sub: 'The calendar alarm still works' })
+    else dpShowToast({ title: 'Not enabled yet', sub: 'Allow notifications when prompted' })
+  }
+
+  function dpTestNotification() {
+    if (!('Notification' in window) || Notification.permission !== 'granted') {
+      dpShowToast({ title: 'Allow notifications first', sub: 'Tap “Enable notifications”' })
+      return
+    }
+    dpFireReminderNotification()
+    dpShowToast({ title: 'Test sent', sub: 'Check your notification shade' })
+  }
+
+  // "Make it a real alarm" — recurring .ics with a VALARM; the phone's
+  // calendar app rings it at the set time, locked screen or not.
+  function handleReminderCalendar() {
+    if (!reminder.days.length || !reminder.time) {
+      dpShowToast({ title: 'Pick days and a time first' })
+      return
+    }
+    triggerDownload(`DayPay-reminder-${fileDateStamp()}.ics`, buildReminderIcs(reminder.days, reminder.time, 'https://daypay-app.vercel.app'), 'text/calendar')
+    try { localStorage.setItem('dp_reminder_calendar', 'done') } catch {}
+    dpShowToast({ title: 'Alarm file downloaded', sub: 'Open it in Calendar to confirm the alarm' })
+  }
+
+  // Page scheduler — arms an in-app notification for the next
+  // occurrence while the app is alive. Re-arms every minute (the app
+  // already ticks realCurrentDate) and after any config change.
+  // The calendar alarm is the guaranteed path; this is the instant one.
+  useEffect(() => {
+    if (remTimerRef.current) { clearTimeout(remTimerRef.current); remTimerRef.current = null }
+    if (!loaded || !reminder.enabled || !reminder.days.length || !reminder.time) return
+    const now = new Date()
+    const next = nextReminder(reminder.days, reminder.time, now)
+    if (!next) return
+    const fireKey = `${formatDateKey(next)}T${reminder.time}`
+    if (remLastFiredRef.current === fireKey) return
+    const delay = next.getTime() - now.getTime()
+    if (delay <= 0 || delay > 7 * 86400000) return
+    remTimerRef.current = setTimeout(() => {
+      remLastFiredRef.current = fireKey
+      dpFireReminderNotification()
+    }, delay)
+    return () => { if (remTimerRef.current) clearTimeout(remTimerRef.current) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, reminder.enabled, reminder.days, reminder.time, realCurrentDate])
+
+  /* v23.2 — reminder onboarding pop card. Guides users to enable and set
+     up a reminder: appears on EVERY app open while no reminder is
+     enabled, until the user either turns one on (retires itself forever)
+     or taps "Don't show this again" (permanent flag, localStorage).
+     "Set up my reminder" deep-links straight to Settings → Reminders
+     via spCatInitRef. Replaces the v23 one-time banner nudge. */
+  const [dpReminderPop, setDpReminderPop] = useState(false)
+  const dpReminderPopShownRef = useRef(false)
+  useEffect(() => {
+    if (dpReminderPopShownRef.current) return
+    if (!loaded || showSplash || authLoading) return
+    if (reminder.enabled) return
+    try { if (localStorage.getItem('dp_reminder_pop_off') === 'yes') return } catch {}
+    const t = setTimeout(() => {
+      dpReminderPopShownRef.current = true
+      setDpReminderPop(true)
+    }, 1600)
+    return () => clearTimeout(t)
+  }, [loaded, showSplash, authLoading, reminder.enabled]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  function dpDismissReminderPop(viaSetup, dontShowAgain) {
+    setDpReminderPop(false)
+    if (dontShowAgain) {
+      try { localStorage.setItem('dp_reminder_pop_off', 'yes') } catch {}
+    }
+    if (viaSetup) {
+      spCatInitRef.current = 'reminders'
+      setShowSettings(true)
+    }
+  }
+
   function handleCellClick(dateObj) {
     if (!dateObj) return
     if (!isEditable) return
@@ -1035,7 +1211,8 @@ export default function App() {
     setRateForm(null)
     setGoalInput(String(goalNum))
     setPaydayInput(String(paydayNum))
-    setShowSettings(false)
+    // v23.1: save lives on the Earnings category page — confirm and stay put
+    dpShowToast({ title: 'Saved', sub: 'Your pay settings are up to date' })
   }
 
   async function handleSaveProfileName(){
@@ -1046,6 +1223,7 @@ export default function App() {
       const { data, error } = await supabase.auth.updateUser({ data: { full_name: profileName.trim() } })
       if (error) throw error
       if (data.user) setUser(data.user)
+      dpShowToast({ title: 'Profile updated' }) // v23.1: after the save actually succeeds
     } catch (e) { setCloudError(e.message) } finally { setProfileSaving(false) }
   }
 
@@ -1564,61 +1742,50 @@ export default function App() {
         </div>
       )}
 
-      {showSplash && (
-        <div className={`daypay-splash${splashMode === 'quick' ? ' quick' : ''}`}>
-          {splashMode === 'quick' ? (
-            <div className="splash-content">
-              <div className="splash-quick">
-                <svg viewBox="0 0 48 48" width="46" height="46" role="img" aria-label="DayPay logo">
-                  <rect x="15" y="16" width="26" height="26" rx="7" fill="var(--daypay-green)"/>
-                  <rect x="7" y="8" width="26" height="26" rx="7" fill={isDarkAppearance ? '#0D1424' : '#FFFFFF'} stroke={isDarkAppearance ? '#2A3550' : '#0B1B32'} strokeWidth="4"/>
-                </svg>
-                <span className="splash-quick-word"><span className="wm-day">Day</span><span className="wm-pay">Pay</span></span>
+      {/* v23.2: reminder onboarding pop card — guides setup while no reminder is enabled */}
+      {dpReminderPop && (
+        <div className="modal-overlay" onClick={()=>dpDismissReminderPop(false)}>
+          <div className="modal dp-rem-pop-modal" onClick={e=>e.stopPropagation()} style={{maxWidth:360}}>
+            <div className="modal-header">
+              <span>Never miss a workday</span>
+              <button className="icon-btn small" onClick={()=>dpDismissReminderPop(false)} aria-label="Close">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="dp-rem-pop">
+                <span className="dp-rem-pop-icon" aria-hidden="true">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+                </span>
+                <p className="dp-rem-pop-text">Turn on a reminder and DayPay will ring for you on the days and time you choose — so no workday goes unlogged.</p>
+                <ol className="dp-rem-steps">
+                  <li><span className="dp-rem-step-num">1</span><span>Pick the days you work and a time that suits you</span></li>
+                  <li><span className="dp-rem-step-num">2</span><span>Turn on notifications — or make it a real alarm</span></li>
+                  <li><span className="dp-rem-step-num">3</span><span>When it rings, open DayPay and stamp your day</span></li>
+                </ol>
+                <div className="dp-rem-actions">
+                  <button type="button" className="btn-primary" onClick={()=>dpDismissReminderPop(true, false)}>Set up my reminder</button>
+                  <button type="button" className="btn-secondary" onClick={()=>dpDismissReminderPop(false, false)}>Not now</button>
+                  <button type="button" className="link-btn dp-rem-dont" onClick={()=>dpDismissReminderPop(false, true)}>Don't show this again</button>
+                </div>
+                <p className="dp-rem-note">The real alarm rings even with your phone locked.</p>
               </div>
             </div>
-          ) : (
-          <div className="splash-content">
-            <div className="splash-scene" aria-hidden="true">
-              <svg className="splash-cal" viewBox="0 0 170 172" width="168" height="170">
-                <rect className="sc-ring" x="62" y="6" width="10" height="20" rx="5"/>
-                <rect className="sc-ring" x="98" y="6" width="10" height="20" rx="5"/>
-                <rect className="sc-body" x="15" y="18" width="140" height="140" rx="18"/>
-                <rect className="sc-head" x="15" y="18" width="140" height="34" rx="18"/>
-                <rect className="sc-head2" x="15" y="38" width="140" height="14"/>
-                <circle className="sc-dot" cx="85" cy="35" r="4.5"/>
-                {(() => {
-                  // month-so-far story: days stamp in one by one, a few stay upcoming
-                  const types = ['ok','ok','ok','ok','wk','ok','ok','ot','ok','wk','ok','ok','p','p','p']
-                  let stamp = -1
-                  return types.map((type, i) => {
-                    const x = 27 + (i % 5) * 26
-                    const y = 68 + Math.floor(i / 5) * 26
-                    if (type === 'p') return <rect key={i} className="sc-pend" x={x} y={y} width="20" height="20" rx="6"/>
-                    stamp += 1
-                    const cls = type === 'wk' ? ' sc-wknd' : type === 'ot' ? ' sc-ot' : ''
-                    return (
-                      <g key={i} className={`sc-cell${cls}`} style={{ animationDelay: `${(0.5 + stamp * 0.085).toFixed(3)}s`, transformOrigin: `${x + 10}px ${y + 11}px` }}>
-                        <rect x={x} y={y} width="20" height="20" rx="6"/>
-                        <text x={x + 10} y={y + 11}>₦</text>
-                      </g>
-                    )
-                  })
-                })()}
-              </svg>
-            </div>
-            <div className="splash-tagline">Know what your work is worth.</div>
-            <div className="splash-loader">
-              <div className="loader-dot"></div>
-              <div className="loader-dot"></div>
-              <div className="loader-dot"></div>
-            </div>
-            <div className="splash-footer">
-              <span className="splash-navy">Day</span><span className="splash-green">Pay</span>
-              <span className="splash-dot">·</span>
-              <span className="splash-year">{realCurrentDate.getFullYear()}</span>
-            </div>
           </div>
-          )}
+        </div>
+      )}
+
+      {/* v23.4: solo splash — animated logo + wordmark + motto, 3s, nothing else */}
+      {showSplash && (
+        <div className="daypay-splash">
+          <div className="splash-solo">
+            <svg className="splash-solo-logo" viewBox="0 0 48 48" width="104" height="104" role="img" aria-label="DayPay logo">
+              <rect className="ssq-green" x="15" y="16" width="26" height="26" rx="7" fill="var(--daypay-green)"/>
+              <rect className="ssq-white" x="7" y="8" width="26" height="26" rx="7" fill={isDarkAppearance ? '#0D1424' : '#FFFFFF'} stroke={isDarkAppearance ? '#2A3550' : '#0B1B32'} strokeWidth="4"/>
+            </svg>
+            <div className="splash-solo-word"><span className="wm-day">Day</span><span className="wm-pay">Pay</span></div>
+            <div className="splash-tagline">Know what your work is worth.</div>
+          </div>
         </div>
       )}
 
@@ -2181,229 +2348,411 @@ export default function App() {
       {settingsX.mounted && (
         <div className={`phone-frame sp-page${settingsX.closing ? ' sp-out' : ''}`}>
           <header className="sp-header">
-            <button className="sp-back" onClick={()=>setShowSettings(false)} aria-label="Back" title="Back to app">
+            <button className="sp-back" onClick={()=> (spCat ? setSpCat(null) : setShowSettings(false))} aria-label="Back" title={spCat ? 'Back to Settings' : 'Back to app'}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
             </button>
-            <div className="sp-title">
-              <span className="sp-title-main">Settings</span>
-              <span className="sp-title-sub">DayPay · Preferences</span>
-            </div>
+            {spCat === null ? (
+              <div className="sp-title">
+                <span className="sp-title-main">Settings</span>
+                <span className="sp-title-sub">Manage your DayPay preferences.</span>
+              </div>
+            ) : (
+              <span className="sp-crumb">Settings</span>
+            )}
             {isSupabaseConfigured && syncStatus!=='idle' && (
               <span className={`sync-badge ${syncStatus}`}>{syncStatus==='syncing'?'syncing…':syncStatus==='synced'?'synced ✓':'error'}</span>
             )}
           </header>
 
-          <div className="sp-scroll">
-            <div className="sp-card sp-profile">
-              {user ? (
-                <>
-                  <div className="welcome-avatar sp-avatar">{(displayName || user.email).charAt(0).toUpperCase()}</div>
-                  <div className="sp-profile-main">
-                    <input className="sp-name-input" value={profileName} onChange={e=>setProfileName(e.target.value)} placeholder="Your display name" maxLength={40} />
-                    <span className="sp-email">{user.email}</span>
-                  </div>
-                  <button className="sp-save-name" onClick={handleSaveProfileName} disabled={profileSaving || !profileName.trim()}>{profileSaving ? 'Saving…' : 'Save'}</button>
-                </>
-              ) : isSupabaseConfigured ? (
-                <>
-                  <div className="sp-avatar sp-avatar-ghost">
-                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                  </div>
-                  <div className="sp-profile-main">
-                    <span className="sp-profile-name">Not signed in</span>
-                    <span className="sp-email">Sign in to sync your records across devices</span>
-                  </div>
-                  <button className="btn-primary sp-signin" onClick={()=>{setAuthMode('signin'); setShowAuth(true)}}>Sign in</button>
-                </>
-              ) : (
-                <>
-                  <div className="sp-avatar sp-avatar-ghost">
-                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m2 2 20 20"/><path d="M5.8 5.8A7 7 0 0 0 15.6 17.8"/><path d="M8.6 8.6a4.5 4.5 0 0 0 6.1 6.1"/><path d="M17.5 17.9A4.5 4.5 0 0 0 16.9 9h-1.8"/></svg>
-                  </div>
-                  <div className="sp-profile-main">
-                    <span className="sp-profile-name">Local only</span>
-                    <span className="sp-email">Cloud sync not configured — data stays on this device</span>
-                  </div>
-                </>
-              )}
-            </div>
+          {spCat === null ? (
+            <div className="sp-scroll">
+              {/* v23.1 — profile card: neutral avatar, name only, tap to open Profile */}
+              <button type="button" className="sp-prof-card" onClick={()=>setSpCat('profile')} aria-label="Open Profile">
+                {user ? <NeutralAvatar size={46} /> : (
+                  <span className="sp-avatar sp-avatar-ghost sp-prof-avatar">
+                    {isSupabaseConfigured ? (
+                      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    ) : (
+                      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m2 2 20 20"/><path d="M5.8 5.8A7 7 0 0 0 15.6 17.8"/><path d="M8.6 8.6a4.5 4.5 0 0 0 6.1 6.1"/><path d="M17.5 17.9A4.5 4.5 0 0 0 16.9 9h-1.8"/></svg>
+                    )}
+                  </span>
+                )}
+                <span className="sp-prof-main">
+                  <span className="sp-prof-name">{user ? (displayName || user.email.split('@')[0]) : (isSupabaseConfigured ? 'Not signed in' : 'Local only')}</span>
+                  <span className="sp-prof-sub">{user ? 'Profile and account' : (isSupabaseConfigured ? 'Sign in to sync your records' : 'Cloud sync not configured')}</span>
+                </span>
+                <span className="sp-card-chev" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m9 18 6-6-6-6"/></svg></span>
+              </button>
 
-            <div className="sp-section-label">Appearance</div>
-            <div className="sp-card">
-              <div className="app-tiles">
-                <button type="button" className={`app-tile${theme==='light' ? ' on' : ''}`} onClick={()=>setTheme('light')} aria-pressed={theme==='light'}>
-                  <span className="app-sw sw-light" aria-hidden="true" />
-                  Light
-                </button>
-                <button type="button" className={`app-tile${theme==='dark' ? ' on' : ''}`} onClick={()=>setTheme('dark')} aria-pressed={theme==='dark'}>
-                  <span className="app-sw sw-dark" aria-hidden="true" />
-                  Dark
-                </button>
-                <button type="button" className={`app-tile${theme.startsWith('glass') ? ' on' : ''}`} onClick={()=>setTheme(isDarkAppearance ? 'glass-dark' : 'glass-light')} aria-pressed={theme.startsWith('glass')}>
-                  <span className="app-sw sw-glass" aria-hidden="true" />
-                  Glass
-                </button>
-              </div>
-              {theme.startsWith('glass') && (
-                <div className="app-flavor">
-                  <span className="app-flavor-lbl">Glass in</span>
-                  <button type="button" className={`app-flavor-btn${theme==='glass-light' ? ' on' : ''}`} onClick={()=>setTheme('glass-light')}>Light</button>
-                  <button type="button" className={`app-flavor-btn${theme==='glass-dark' ? ' on' : ''}`} onClick={()=>setTheme('glass-dark')}>Dark</button>
-                  <span className="app-flavor-note">Frosted surfaces · standard modes stay untouched</span>
-                </div>
-              )}
-            </div>
+              <button type="button" className="sp-cat-card" onClick={()=>setSpCat('profile')}>
+                <span className="sp-cat-ico" aria-hidden="true"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><circle cx="12" cy="8.2" r="3.6"/><path d="M4.8 19.6c1.4-3.2 4-4.8 7.2-4.8s5.8 1.6 7.2 4.8"/></svg></span>
+                <span className="sp-cat-body">
+                  <span className="sp-cat-line">
+                    <span className="sp-cat-name">Profile</span>
+                    <span className="sp-cat-sum">{user ? 'Signed in' : (isSupabaseConfigured ? 'Sign in' : 'Local')}</span>
+                  </span>
+                  <span className="sp-cat-desc">Personal and account information.</span>
+                </span>
+              </button>
 
-            <div className="sp-section-label">Earnings</div>
-            <div className="sp-card">
-              <div className="sp-rh">
-                <div className="sp-rh-head">
-                  <span className="sp-row-title">Daily rate</span>
-                  <span className="sp-row-sub">A new rate applies to days logged from its start date — locked months never change</span>
-                </div>
-                {(rateDraft || []).map((p, i) => (
-                  <div className={`sp-rh-row${p.from > todayKey ? ' future' : ''}`} key={p.from}>
-                    <div className="sp-rh-main">
-                      <span className="sp-rh-rate">{formatNaira(p.dailyRate)}<em> / day</em></span>
-                      <span className="sp-rh-sub">weekend ×{p.weekendMultiplier} · holiday ×{p.holidayMultiplier} · {i === 0 ? 'since' : 'from'} {shortDate(p.from)}</span>
+              <button type="button" className="sp-cat-card" onClick={()=>setSpCat('appearance')}>
+                <span className="sp-cat-ico" aria-hidden="true"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z"/><path d="M19 15l.7 1.8 1.8.7-1.8.7L19 19.7l-.7-1.8-1.8-.7 1.8-.7L19 15Z"/></svg></span>
+                <span className="sp-cat-body">
+                  <span className="sp-cat-line">
+                    <span className="sp-cat-name">Appearance</span>
+                    <span className="sp-cat-sum">{THEME_OPTIONS.find(o => o.id === theme)?.label || 'Light'}</span>
+                  </span>
+                  <span className="sp-cat-desc">Customize how DayPay looks.</span>
+                </span>
+              </button>
+
+              <button type="button" className="sp-cat-card" onClick={()=>setSpCat('earnings')}>
+                <span className="sp-cat-ico" aria-hidden="true"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><circle cx="12" cy="12" r="2.6"/><path d="M6 12h.01M18 12h.01"/></svg></span>
+                <span className="sp-cat-body">
+                  <span className="sp-cat-line">
+                    <span className="sp-cat-name">Earnings</span>
+                    <span className="sp-cat-sum">{formatNaira(rateForDate(todayKey).dailyRate)}/day · goal {formatNaira(settings.salaryGoal)}</span>
+                  </span>
+                  <span className="sp-cat-desc">Manage your pay and earning goals.</span>
+                </span>
+              </button>
+
+              <button type="button" className="sp-cat-card" onClick={()=>setSpCat('reminders')}>
+                <span className="sp-cat-ico" aria-hidden="true"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></span>
+                <span className="sp-cat-body">
+                  <span className="sp-cat-line">
+                    <span className="sp-cat-name">Reminders</span>
+                    <span className="sp-cat-sum">{reminder.enabled ? `Enabled · ${remDaysShort(reminder.days)} · ${time12(reminder.time)}` : 'Off'}</span>
+                  </span>
+                  <span className="sp-cat-desc">Manage when DayPay reminds you to log your work.</span>
+                </span>
+              </button>
+
+              <button type="button" className="sp-cat-card" onClick={()=>setSpCat('data')}>
+                <span className="sp-cat-ico" aria-hidden="true"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg></span>
+                <span className="sp-cat-body">
+                  <span className="sp-cat-line">
+                    <span className="sp-cat-name">Your Data</span>
+                    <span className="sp-cat-sum">{user ? 'Cloud ✓' : (isSupabaseConfigured ? 'Sign in' : 'Local')}</span>
+                  </span>
+                  <span className="sp-cat-desc">Export your DayPay data.</span>
+                </span>
+              </button>
+
+              <button type="button" className="sp-cat-card" onClick={()=>setSpCat('about')}>
+                <span className="sp-cat-ico" aria-hidden="true"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg></span>
+                <span className="sp-cat-body">
+                  <span className="sp-cat-line">
+                    <span className="sp-cat-name">About DayPay</span>
+                    <span className="sp-cat-sum">v{appVersionNum}</span>
+                  </span>
+                  <span className="sp-cat-desc">App information and version details.</span>
+                </span>
+              </button>
+
+              <div className="sp-storage">DayPay — Know what your work is worth. {isSupabaseConfigured && user ? `Synced for ${displayName || user.email}.` : 'Local.'} PWA ready. © 2026 Akaninyene — All rights reserved.</div>
+            </div>
+          ) : (
+            <>
+              <div key={spCat} className="sp-scroll sp-cat-anim">
+                {spCat === 'profile' && (
+                  <>
+                    <div className="sp-card sp-profile">
+                      {user ? (
+                        <>
+                          <NeutralAvatar size={52} />
+                          <div className="sp-profile-main">
+                            <input className="sp-name-input" value={profileName} onChange={e=>setProfileName(e.target.value)} placeholder="Your display name" maxLength={40} />
+                            <span className="sp-email">{user.email}</span>
+                          </div>
+                          <button className="sp-save-name" onClick={handleSaveProfileName} disabled={profileSaving || !profileName.trim()}>{profileSaving ? 'Saving…' : 'Save'}</button>
+                        </>
+                      ) : isSupabaseConfigured ? (
+                        <>
+                          <div className="sp-avatar sp-avatar-ghost">
+                            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                          </div>
+                          <div className="sp-profile-main">
+                            <span className="sp-profile-name">Not signed in</span>
+                            <span className="sp-email">Sign in to sync your records across devices</span>
+                          </div>
+                          <button className="btn-primary sp-signin" onClick={()=>{setAuthMode('signin'); setShowAuth(true)}}>Sign in</button>
+                        </>
+                      ) : (
+                        <>
+                          <div className="sp-avatar sp-avatar-ghost">
+                            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m2 2 20 20"/><path d="M5.8 5.8A7 7 0 0 0 15.6 17.8"/><path d="M8.6 8.6a4.5 4.5 0 0 0 6.1 6.1"/><path d="M17.5 17.9A4.5 4.5 0 0 0 16.9 9h-1.8"/></svg>
+                          </div>
+                          <div className="sp-profile-main">
+                            <span className="sp-profile-name">Local only</span>
+                            <span className="sp-email">Cloud sync not configured — data stays on this device</span>
+                          </div>
+                        </>
+                      )}
                     </div>
-                    {i === (rateDraft || []).length - 1 && p.from <= todayKey && <span className="sp-rh-pill">current</span>}
-                    {p.from > todayKey && <span className="sp-rh-pill soon">starts {shortDate(p.from)}</span>}
-                    {i > 0 && (
-                      <button type="button" className="sp-rh-del" onClick={()=>removeRateDraft(i)} title="Remove this rate change" aria-label="Remove this rate change">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                    {user && <p className="sp-hint">Your name appears on payslips, shares and your summary — saving updates it everywhere immediately.</p>}
+                  </>
+                )}
+
+                {spCat === 'appearance' && (
+                  <div className="sp-card">
+                    <div className="app-tiles">
+                      <button type="button" className={`app-tile${theme==='light' ? ' on' : ''}`} onClick={()=>setTheme('light')} aria-pressed={theme==='light'}>
+                        <span className="app-sw sw-light" aria-hidden="true" />
+                        Light
                       </button>
+                      <button type="button" className={`app-tile${theme==='dark' ? ' on' : ''}`} onClick={()=>setTheme('dark')} aria-pressed={theme==='dark'}>
+                        <span className="app-sw sw-dark" aria-hidden="true" />
+                        Dark
+                      </button>
+                      <button type="button" className={`app-tile${theme.startsWith('glass') ? ' on' : ''}`} onClick={()=>setTheme(isDarkAppearance ? 'glass-dark' : 'glass-light')} aria-pressed={theme.startsWith('glass')}>
+                        <span className="app-sw sw-glass" aria-hidden="true" />
+                        Glass
+                      </button>
+                    </div>
+                    {theme.startsWith('glass') && (
+                      <div className="app-flavor">
+                        <span className="app-flavor-lbl">Glass in</span>
+                        <button type="button" className={`app-flavor-btn${theme==='glass-light' ? ' on' : ''}`} onClick={()=>setTheme('glass-light')}>Light</button>
+                        <button type="button" className={`app-flavor-btn${theme==='glass-dark' ? ' on' : ''}`} onClick={()=>setTheme('glass-dark')}>Dark</button>
+                        <span className="app-flavor-note">Frosted surfaces · standard modes stay untouched</span>
+                      </div>
                     )}
                   </div>
-                ))}
-                {rateForm ? (
-                  <div className="sp-rh-form">
-                    <div className="sp-rh-frow">
-                      <span className="sp-rh-flabel">From</span>
-                      <input type="date" className="sp-rh-fdate" value={rateForm.from} onChange={e=>setRateForm(f => (f ? { ...f, from: e.target.value } : f))} aria-label="Rate change starts on" />
-                    </div>
-                    <div className="sp-rh-frow">
-                      <span className="sp-rh-flabel">New daily rate</span>
-                      <span className="sp-input-wrap sp-rh-frate"><span className="sp-input-prefix">₦</span><input className="sp-input" value={rateForm.rate} onChange={e=>setRateForm(f => (f ? { ...f, rate: e.target.value.replace(/[^0-9,]/g, '') } : f))} inputMode="numeric" placeholder="18000" aria-label="New daily rate" /></span>
-                    </div>
-                    <div className="sp-rh-factions">
-                      <button type="button" className="sp-rh-cancel" onClick={()=>setRateForm(null)}>Cancel</button>
-                      <button type="button" className="btn-primary sp-rh-apply" onClick={applyRateForm} disabled={!rateFormValid()}>Add rate change</button>
-                    </div>
-                  </div>
-                ) : (
-                  <button type="button" className="sp-rh-add" onClick={()=>setRateForm({ from: todayKey, rate: '' })}>+ Add rate change</button>
                 )}
-                <div className="sp-rh-truth">
-                  {prevMonthTotal > 0 && <span className="sp-rh-chip">🔒 {getMonthName(realMonth === 0 ? 11 : realMonth - 1, true)} · {formatNaira(prevMonthTotal)} · frozen</span>}
-                  <span className="sp-rh-chip">Now · {formatNaira(rateForPeriod(rateDraft || [], todayKey, settings).dailyRate)}/day</span>
-                  {(rateDraft || []).filter(p => p.from > todayKey).slice(0, 1).map(p => (
-                    <span className="sp-rh-chip hi" key={p.from}>{shortDate(p.from)} → {formatNaira(p.dailyRate)}</span>
-                  ))}
-                </div>
-              </div>
-              <div className="sp-row">
-                <span className="sp-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></svg></span>
-                <span className="sp-row-main">
-                  <span className="sp-row-title">Monthly goal</span>
-                  <span className="sp-row-sub">Drives the progress ring in your summary</span>
-                </span>
-                <span className="sp-input-wrap"><span className="sp-input-prefix">₦</span><input className="sp-input" value={goalInput} onChange={e=>setGoalInput(e.target.value.replace(/[^0-9,]/g,''))} inputMode="numeric" placeholder="500000" /></span>
-              </div>
-              <div className="sp-row">
-                <span className="sp-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="4" width="18" height="17" rx="2.5"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
-                <span className="sp-row-main">
-                  <span className="sp-row-title">Payday</span>
-                  <span className="sp-row-sub">Day of month you get paid · 0 = last day</span>
-                </span>
-                <span className="sp-input-wrap sp-input-day"><input className="sp-input" value={paydayInput} onChange={e=>setPaydayInput(e.target.value.replace(/[^0-9]/g,''))} inputMode="numeric" placeholder="0" /></span>
-              </div>
-            </div>
 
-            <div className="sp-section-label">Your data</div>
-            <div className="sp-card sp-export">
-              <div className="sp-export-head">
-                <span className="sp-export-title">Export my data</span>
-                <span className="sp-export-sub">Every day, rate and setting — as a file you own.</span>
-              </div>
-              <div className="sp-export-row">
-                <button type="button" className="sp-export-btn primary" onClick={handleExportJson}>⬇ JSON · everything</button>
-                <button type="button" className="sp-export-btn ghost" onClick={handleExportCsv}>⬇ CSV · one row per day</button>
-              </div>
-              <p className="sp-hint">One row per worked day — rate is that day's own rate, amount is what it actually paid, even after rate changes. JSON carries every record and setting for a full restore.</p>
-            </div>
-
-            <div className="sp-section-label">Leave types</div>
-            <div className="sp-card sp-lt-card">
-              <div className="lt-list">
-                {(ltDraft || []).map((t, i) => (
-                  <div className="lt-row" key={t.id}>
-                    <input className="lt-name" value={t.name} onChange={e=>updateLtDraft(i, {name: e.target.value})} placeholder="Leave name" maxLength={40} />
-                    <div className="lt-pay">
-                      <button type="button" className={`lt-mode ${t.payMode!=='flat'?'on':''}`} onClick={()=>updateLtDraft(i, {payMode: t.payMode==='flat'?'percent':'flat'})} title="Toggle: % of daily rate / flat ₦ per day">{t.payMode==='flat' ? '₦' : '%'}</button>
-                      <input className="lt-value" inputMode="decimal" value={t.payValue} onChange={e=>updateLtDraft(i, {payValue: e.target.value.replace(/[^0-9.]/g,'')})} title={t.payMode==='flat' ? 'Flat ₦ per leave day' : '% of your daily rate'} />
+                {spCat === 'earnings' && (
+                  <>
+                    <div className="sp-section-label">Current pay</div>
+                    <div className="sp-card sp-rate-card">
+                      <span className="sp-rate-cap">Daily rate</span>
+                      <span className="sp-rate-big">{formatNaira(rateForDate(todayKey).dailyRate)}<em> / day</em></span>
                     </div>
-                    <button type="button" className="lt-del" onClick={()=>removeLtDraft(i)} title="Delete this leave type">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+
+                    <button type="button" className="dp-fold" onClick={()=>setEarnHistoryOpen(v=>!v)} aria-expanded={earnHistoryOpen}>
+                      <span className="dp-fold-main">
+                        <span className="dp-fold-title">Rate history</span>
+                        <span className="dp-fold-sum">{(rateDraft || settings.ratePeriods || []).length} rate in force · new rates apply from their start date</span>
+                      </span>
+                      <span className={`dp-fold-chev${earnHistoryOpen ? ' open' : ''}`} aria-hidden="true">▸</span>
                     </button>
+                    {earnHistoryOpen && (
+                      <div className="sp-card">
+                        <div className="sp-rh">
+                          {(rateDraft || []).map((p, i) => (
+                            <div className={`sp-rh-row${p.from > todayKey ? ' future' : ''}`} key={p.from}>
+                              <div className="sp-rh-main">
+                                <span className="sp-rh-rate">{formatNaira(p.dailyRate)}<em> / day</em></span>
+                                <span className="sp-rh-sub">weekend ×{p.weekendMultiplier} · holiday ×{p.holidayMultiplier} · {i === 0 ? 'since' : 'from'} {shortDate(p.from)}</span>
+                              </div>
+                              {i === (rateDraft || []).length - 1 && p.from <= todayKey && <span className="sp-rh-pill">current</span>}
+                              {p.from > todayKey && <span className="sp-rh-pill soon">starts {shortDate(p.from)}</span>}
+                              {i > 0 && (
+                                <button type="button" className="sp-rh-del" onClick={()=>removeRateDraft(i)} title="Remove this rate change" aria-label="Remove this rate change">
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                          {rateForm ? (
+                            <div className="sp-rh-form">
+                              <div className="sp-rh-frow">
+                                <span className="sp-rh-flabel">From</span>
+                                <input type="date" className="sp-rh-fdate" value={rateForm.from} onChange={e=>setRateForm(f => (f ? { ...f, from: e.target.value } : f))} aria-label="Rate change starts on" />
+                              </div>
+                              <div className="sp-rh-frow">
+                                <span className="sp-rh-flabel">New daily rate</span>
+                                <span className="sp-input-wrap sp-rh-frate"><span className="sp-input-prefix">₦</span><input className="sp-input" value={rateForm.rate} onChange={e=>setRateForm(f => (f ? { ...f, rate: e.target.value.replace(/[^0-9,]/g, '') } : f))} inputMode="numeric" placeholder="18000" aria-label="New daily rate" /></span>
+                              </div>
+                              <div className="sp-rh-factions">
+                                <button type="button" className="sp-rh-cancel" onClick={()=>setRateForm(null)}>Cancel</button>
+                                <button type="button" className="btn-primary sp-rh-apply" onClick={applyRateForm} disabled={!rateFormValid()}>Add rate change</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button type="button" className="sp-rh-add" onClick={()=>setRateForm({ from: todayKey, rate: '' })}>+ Add rate change</button>
+                          )}
+                          <div className="sp-rh-truth">
+                            {prevMonthTotal > 0 && <span className="sp-rh-chip">🔒 {getMonthName(realMonth === 0 ? 11 : realMonth - 1, true)} · {formatNaira(prevMonthTotal)} · frozen</span>}
+                            <span className="sp-rh-chip">Now · {formatNaira(rateForPeriod(rateDraft || [], todayKey, settings).dailyRate)}/day</span>
+                            {(rateDraft || []).filter(p => p.from > todayKey).slice(0, 1).map(p => (
+                              <span className="sp-rh-chip hi" key={p.from}>{shortDate(p.from)} → {formatNaira(p.dailyRate)}</span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="sp-section-label">Goals &amp; paydays</div>
+                    <div className="sp-card">
+                      <div className="sp-row sp-row-plain">
+                        <span className="sp-row-main">
+                          <span className="sp-row-title">Monthly goal</span>
+                          <span className="sp-row-sub">Drives the progress ring in your summary</span>
+                        </span>
+                        <span className="sp-input-wrap sp-input-lg-wrap"><span className="sp-input-prefix">₦</span><input className="sp-input" value={goalInput} onChange={e=>setGoalInput(e.target.value.replace(/[^0-9,]/g,''))} inputMode="numeric" placeholder="500000" /></span>
+                      </div>
+                      <div className="sp-row sp-row-plain">
+                        <span className="sp-row-main">
+                          <span className="sp-row-title">Payday</span>
+                          <span className="sp-row-sub">Day of month you get paid · 0 = last day</span>
+                        </span>
+                        <span className="sp-input-wrap sp-input-day sp-input-lg-wrap"><input className="sp-input" value={paydayInput} onChange={e=>setPaydayInput(e.target.value.replace(/[^0-9]/g,''))} inputMode="numeric" placeholder="0" /></span>
+                      </div>
+                    </div>
+
+                    <div className="sp-section-label">Leave types</div>
+                    <div className="sp-card sp-lt-card">
+                      <div className="lt-list">
+                        {(ltDraft || []).map((t, i) => (
+                          <div className="lt-row" key={t.id}>
+                            <input className="lt-name" value={t.name} onChange={e=>updateLtDraft(i, {name: e.target.value})} placeholder="Leave name" maxLength={40} />
+                            <div className="lt-pay">
+                              <button type="button" className={`lt-mode ${t.payMode!=='flat'?'on':''}`} onClick={()=>updateLtDraft(i, {payMode: t.payMode==='flat'?'percent':'flat'})} title="Toggle: % of daily rate / flat ₦ per day">{t.payMode==='flat' ? '₦' : '%'}</button>
+                              <input className="lt-value" inputMode="decimal" value={t.payValue} onChange={e=>updateLtDraft(i, {payValue: e.target.value.replace(/[^0-9.]/g,'')})} title={t.payMode==='flat' ? 'Flat ₦ per leave day' : '% of your daily rate'} />
+                            </div>
+                            <button type="button" className="lt-del" onClick={()=>removeLtDraft(i)} title="Delete this leave type">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                            </button>
+                          </div>
+                        ))}
+                        <button type="button" className="lt-add" onClick={addLtDraft}>+ Add leave type</button>
+                      </div>
+                    </div>
+                    <p className="sp-hint"><strong>%</strong> of daily rate (50 = half pay) · <strong>₦</strong> flat per day · logged days keep their amounts.</p>
+
+                    <button type="button" className="dp-fold" onClick={()=>setSpFold(f=>({...f, pay:!f.pay}))} aria-expanded={spFold.pay}>
+                      <span className="dp-fold-main">
+                        <span className="dp-fold-title">Your pay rates</span>
+                        <span className="dp-fold-sum">Regular {formatNaira(settings.dailyRate)} · 2× {formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span>
+                      </span>
+                      <span className={`dp-fold-chev${spFold.pay ? ' open' : ''}`} aria-hidden="true">▸</span>
+                    </button>
+                    {spFold.pay && (
+                      <div className="sp-card dp-fold-body">
+                        <div className="sp-kv"><span>Regular (OK)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate)}</span></div>
+                        <div className="sp-kv"><span>Weekend (2×)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span></div>
+                        <div className="sp-kv"><span>Overtime (OT 2×)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span></div>
+                        <div className="sp-kv"><span>Holiday (HOL 2×)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate*settings.holidayMultiplier)}</span></div>
+                        {leaveTypes.map(t => (
+                          <div className="sp-kv" key={`ib-${t.id}`}><span>{t.name}</span><span className="sp-kv-val">{t.payMode!=='flat' ? `${t.payValue}% · ` : ''}{formatNaira(leavePayFor(t, settings.dailyRate))}</span></div>
+                        ))}
+                        <p className="sp-hint">Weekdays: OK → edit to OT · Weekends auto 2× · Holidays auto HOL 2× (Nigeria).</p>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {spCat === 'reminders' && (
+                  <div className="sp-card sp-rem-card">
+                    <div className="sp-row">
+                      <span className="sp-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></span>
+                      <span className="sp-row-main">
+                        <span className="sp-row-title">Reminder</span>
+                        <span className="sp-row-sub">DayPay rings for you to open the app and log</span>
+                      </span>
+                      <button type="button" role="switch" aria-checked={reminder.enabled} aria-label="Toggle reminder" className={`sp-switch${reminder.enabled ? ' on' : ''}`} onClick={toggleReminder}>
+                        <span className="sp-switch-knob" aria-hidden="true" />
+                      </button>
+                    </div>
+
+                    {reminder.enabled && (
+                      <div className="sp-rem-body">
+                        <div className="sp-rem-label">Which days</div>
+                        <div className="sp-rem-days" role="group" aria-label="Reminder days">
+                          {[[1,'Mon'],[2,'Tue'],[3,'Wed'],[4,'Thu'],[5,'Fri'],[6,'Sat'],[0,'Sun']].map(([d, label]) => (
+                            <button key={d} type="button" className={`sp-rem-day${reminder.days.includes(d) ? ' on' : ''}`} onClick={()=>toggleRemDay(d)} aria-pressed={reminder.days.includes(d)}>
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="sp-rem-label">Time of day</div>
+                        <div className="sp-rem-time-row">
+                          <input type="time" className="sp-rem-time" value={reminder.time} onChange={e => { if (e.target.value) dpReminderPatch({ time: e.target.value }) }} aria-label="Reminder time" />
+                          <span className="sp-rem-summary mono">{describeReminder(reminder.days, reminder.time)}</span>
+                        </div>
+
+                        <div className="sp-rem-label">How it reaches you</div>
+                        <div className="sp-rem-delivery">
+                          <button type="button" className="sp-rem-btn" onClick={dpRequestNotifPermission} disabled={notifPerm === 'granted' || notifPerm === 'unsupported'}>
+                            {notifPerm === 'granted'
+                              ? '✓ Notifications on'
+                              : notifPerm === 'denied'
+                                ? 'Notifications blocked in browser'
+                                : notifPerm === 'unsupported'
+                                  ? 'Notifications not supported here'
+                                  : 'Enable notifications'}
+                          </button>
+                          {notifPerm === 'granted' && (
+                            <button type="button" className="sp-rem-btn ghost" onClick={dpTestNotification}>🔔 Test</button>
+                          )}
+                          <button type="button" className="sp-rem-btn alarm" onClick={handleReminderCalendar}>
+                            📅 Make it a real alarm
+                          </button>
+                          <p className="sp-hint">
+                            {notifPerm === 'granted' && 'Notifications ring while DayPay is open or installed on this phone. '}
+                            <strong>“Make it a real alarm”</strong> downloads a repeating calendar event with an alarm — open it in your Calendar app and it rings at that time even with the phone locked, on any phone. It also syncs with your account, so a new device keeps the same days and time.
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                ))}
-                <button type="button" className="lt-add" onClick={addLtDraft}>+ Add leave type</button>
-              </div>
-            </div>
-            <p className="sp-hint"><strong>%</strong> of daily rate (50 = half pay) · <strong>₦</strong> flat per day · logged days keep their amounts.</p>
+                )}
 
-            <button type="button" className="dp-fold" onClick={()=>setSpFold(f=>({...f, pay:!f.pay}))} aria-expanded={spFold.pay}>
-              <span className="dp-fold-main">
-                <span className="dp-fold-title">Your pay rates</span>
-                <span className="dp-fold-sum">Regular {formatNaira(settings.dailyRate)} · 2× {formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span>
-              </span>
-              <span className={`dp-fold-chev${spFold.pay ? ' open' : ''}`} aria-hidden="true">▸</span>
-            </button>
-            {spFold.pay && (
-              <div className="sp-card dp-fold-body">
-                <div className="sp-kv"><span>Regular (OK)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate)}</span></div>
-                <div className="sp-kv"><span>Weekend (2×)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span></div>
-                <div className="sp-kv"><span>Overtime (OT 2×)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate*settings.weekendMultiplier)}</span></div>
-                <div className="sp-kv"><span>Holiday (HOL 2×)</span><span className="sp-kv-val">{formatNaira(settings.dailyRate*settings.holidayMultiplier)}</span></div>
-                {leaveTypes.map(t => (
-                  <div className="sp-kv" key={`ib-${t.id}`}><span>{t.name}</span><span className="sp-kv-val">{t.payMode!=='flat' ? `${t.payValue}% · ` : ''}{formatNaira(leavePayFor(t, settings.dailyRate))}</span></div>
-                ))}
-                <p className="sp-hint">Weekdays: OK → edit to OT · Weekends auto 2× · Holidays auto HOL 2× (Nigeria).</p>
-              </div>
-            )}
+                {spCat === 'data' && (
+                  <>
+                    <div className="sp-card sp-export">
+                      <div className="sp-export-head">
+                        <span className="sp-export-title">Export my data</span>
+                        <span className="sp-export-sub">Export your DayPay work records and earnings data for your own records.</span>
+                      </div>
+                      <div className="sp-export-row">
+                        <button type="button" className="sp-export-btn primary" onClick={handleExportJson}>⬇ JSON · everything</button>
+                        <button type="button" className="sp-export-btn ghost" onClick={handleExportCsv}>⬇ CSV · one row per day</button>
+                      </div>
+                      <p className="sp-hint">One row per worked day — rate is that day's own rate, amount is what it actually paid, even after rate changes. JSON carries every record and setting for a full restore.</p>
+                    </div>
 
-            <button type="button" className="dp-fold" onClick={()=>setSpFold(f=>({...f, track:!f.track}))} aria-expanded={spFold.track}>
-              <span className="dp-fold-main">
-                <span className="dp-fold-title">Tracking</span>
-                <span className="dp-fold-sum">{getMonthName(realMonth, true)} {realYear} · {isSupabaseConfigured ? (user ? 'Synced' : 'Sync ready — sign in') : 'Local only'}</span>
-              </span>
-              <span className={`dp-fold-chev${spFold.track ? ' open' : ''}`} aria-hidden="true">▸</span>
-            </button>
-            {spFold.track && (
-              <div className="sp-card dp-fold-body">
-                <div className="sp-kv"><span>Current month</span><span className="sp-kv-val">{getMonthName(realMonth)} {realYear} · Active</span></div>
-                <div className="sp-kv"><span>Tracking started</span><span className="sp-kv-val">{startMonthKey || 'Not set'}</span></div>
-                <div className="sp-kv"><span>Cloud sync</span><span className="sp-kv-val" style={{color: isSupabaseConfigured ? 'var(--green-ink)' : 'var(--danger)'}}>{isSupabaseConfigured ? (user ? 'Connected' : 'Ready — sign in') : 'Not configured'}</span></div>
-                <div className="sp-notes">
-                  <span>• Only the current month is editable</span>
-                  <span>• Previous months lock with final salary preserved</span>
-                  <span>• Holidays auto-detected (Nigeria) with HOL stamp</span>
-                  <span>• PWA: installable, offline-ready</span>
+                    <div className="sp-section-label">Your data</div>
+                    <div className="sp-card">
+                      <div className="sp-kv"><span>Cloud sync</span><span className="sp-kv-val" style={{color: isSupabaseConfigured ? 'var(--green-ink)' : 'var(--danger)'}}>{isSupabaseConfigured ? (user ? 'Connected' : 'Ready — sign in') : 'Not configured'}</span></div>
+                      <div className="sp-kv"><span>Tracking started</span><span className="sp-kv-val">{startMonthKey || 'Not set'}</span></div>
+                      <div className="sp-kv"><span>Current month</span><span className="sp-kv-val">{getMonthName(realMonth)} {realYear} · Active</span></div>
+                    </div>
+                  </>
+                )}
+
+                {spCat === 'about' && (
+                  <div className="sp-about">
+                    <svg viewBox="0 0 48 48" width="72" height="72" role="img" aria-label="DayPay logo">
+                      <rect x="15" y="16" width="26" height="26" rx="7" fill="var(--daypay-green)"/>
+                      <rect x="7" y="8" width="26" height="26" rx="7" fill={isDarkAppearance ? '#0D1424' : '#FFFFFF'} stroke={isDarkAppearance ? '#2A3550' : '#0B1B32'} strokeWidth="4"/>
+                    </svg>
+                    <div className="sp-about-word"><span className="wm-day">Day</span><span className="wm-pay">Pay</span></div>
+                    <div className="sp-about-tag">“Know what your work is worth.”</div>
+                    <p className="sp-about-desc">DayPay is a personal salary-tracking application built for the Nigerian work environment. It records your worked days, overtime, weekend and public-holiday pay, and shows exactly what your work is worth — with monthly payslips, salary goals and full ownership of your data.</p>
+                    <span className="sp-about-ver">Version {appVersionNum} · {APP_VERSION}</span>
+                    <div className="sp-card sp-about-card">
+                      <div className="sp-kv"><span>Works offline</span><span className="sp-kv-val" style={{color:'var(--green-ink)'}}>PWA ready</span></div>
+                      <div className="sp-kv"><span>Cloud sync</span><span className="sp-kv-val" style={{color: isSupabaseConfigured ? 'var(--green-ink)' : 'var(--danger)'}}>{isSupabaseConfigured ? (user ? 'Connected' : 'Ready — sign in') : 'Not configured'}</span></div>
+                      <div className="sp-kv"><span>Deployed at</span><span className="sp-kv-val">daypay-app.vercel.app</span></div>
+                    </div>
+                    <div className="sp-about-copy">© 2026 Akaninyene — All rights reserved.<br/>DayPay — Know what your work is worth.</div>
+                  </div>
+                )}
+              </div>
+
+              {spCat === 'earnings' && (
+                <div className="sp-savebar">
+                  <span className="sp-savebar-note">Changes apply on save</span>
+                  <button className="btn-primary sp-save-btn" onClick={handleSaveRate}>Save changes</button>
                 </div>
-              </div>
-            )}
-
-            <div className="sp-storage">DayPay — Know what your work is worth. {isSupabaseConfigured && user ? `Synced for ${displayName || user.email}.` : 'Local.'} PWA ready. © 2026 Akaninyene — All rights reserved.</div>
-          </div>
-
-          <div className="sp-savebar">
-            <span className="sp-savebar-note">Changes apply on save</span>
-            <button className="btn-primary sp-save-btn" onClick={handleSaveRate}>Save changes</button>
-          </div>
+              )}
+            </>
+          )}
         </div>
       )}
-
       {authX.mounted && (
         <div className={`modal-overlay${authX.closing ? ' mo-out' : ''}`} onClick={()=>{setShowAuth(false); setShowForgot(false); setForgotSent(false)}}>
           <div className={`modal${authX.closing ? ' m-out' : ''}`} onClick={e=>e.stopPropagation()}>
