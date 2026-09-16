@@ -11,7 +11,7 @@ import jsPDF from 'jspdf'
 const STORAGE_KEY = 'work_tracker_v1'
 // v19-D: splash version — the splash is an occasion (first run + version
 // updates), not a toll. Bump together with sw.js CACHE_NAME on every release.
-const APP_VERSION = 'daypay-v23'
+const APP_VERSION = 'daypay-v24'
 const appVersionNum = (APP_VERSION.match(/v([\d.]+)/) || [])[1] || '' // v23.1: "23" for the About page
 const START_KEY = 'work_tracker_start_v1'
 
@@ -1742,34 +1742,41 @@ export default function App() {
         </div>
       )}
 
-      {/* v23.2: reminder onboarding pop card — guides setup while no reminder is enabled */}
+      {/* v23.6: reminder onboarding pop card — "Slip" design (approved mockup 2) */}
       {dpReminderPop && (
         <div className="modal-overlay" onClick={()=>dpDismissReminderPop(false)}>
-          <div className="modal dp-rem-pop-modal" onClick={e=>e.stopPropagation()} style={{maxWidth:360}}>
-            <div className="modal-header">
-              <span>Never miss a workday</span>
-              <button className="icon-btn small" onClick={()=>dpDismissReminderPop(false)} aria-label="Close">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg>
-              </button>
-            </div>
-            <div className="modal-body">
-              <div className="dp-rem-pop">
-                <span className="dp-rem-pop-icon" aria-hidden="true">
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+          <div className="modal dp-rem-pop-modal" onClick={e=>e.stopPropagation()}>
+            <button type="button" className="dp-rem-pop-x" onClick={()=>dpDismissReminderPop(false)} aria-label="Close">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+            <div className="dp-rem-pop">
+              <div className="dp-rem-pop-grab" aria-hidden="true" />
+              <div className="dp-rem-pop-hero" aria-hidden="true">
+                <svg viewBox="0 0 48 48" width="44" height="44">
+                  <rect x="15" y="16" width="26" height="26" rx="7" fill="var(--daypay-green)"/>
+                  <rect x="7" y="8" width="26" height="26" rx="7" fill={isDarkAppearance ? '#0D1424' : '#FFFFFF'} stroke={isDarkAppearance ? '#2A3550' : '#0B1B32'} strokeWidth="4"/>
+                </svg>
+                <span className="dp-rem-pop-bell">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
                 </span>
-                <p className="dp-rem-pop-text">Turn on a reminder and DayPay will ring for you on the days and time you choose — so no workday goes unlogged.</p>
-                <ol className="dp-rem-steps">
-                  <li><span className="dp-rem-step-num">1</span><span>Pick the days you work and a time that suits you</span></li>
-                  <li><span className="dp-rem-step-num">2</span><span>Turn on notifications — or make it a real alarm</span></li>
-                  <li><span className="dp-rem-step-num">3</span><span>When it rings, open DayPay and stamp your day</span></li>
-                </ol>
-                <div className="dp-rem-actions">
-                  <button type="button" className="btn-primary" onClick={()=>dpDismissReminderPop(true, false)}>Set up my reminder</button>
-                  <button type="button" className="btn-secondary" onClick={()=>dpDismissReminderPop(false, false)}>Not now</button>
-                  <button type="button" className="link-btn dp-rem-dont" onClick={()=>dpDismissReminderPop(false, true)}>Don't show this again</button>
-                </div>
-                <p className="dp-rem-note">The real alarm rings even with your phone locked.</p>
               </div>
+              <h2 className="dp-rem-pop-title">Never miss a workday</h2>
+              <p className="dp-rem-pop-text">DayPay rings for you on the days and time you choose — so no workday goes unlogged.</p>
+              <ol className="dp-rem-steps">
+                <li><span className="dp-rem-step-sq">1</span><span>Pick the days you work and a time that suits you</span></li>
+                <li><span className="dp-rem-step-sq">2</span><span>Turn on notifications — or make it a real alarm</span></li>
+                <li><span className="dp-rem-step-sq">3</span><span>When it rings, open DayPay and stamp your day</span></li>
+              </ol>
+              <div className="dp-rem-pop-chip">
+                <span className="dp-rem-pop-chip-cap">Your setup</span>
+                <span className="dp-rem-pop-chip-val mono">{remDaysShort(reminder.days.length ? reminder.days : [1, 2, 3, 4, 5])} · {time12(reminder.time)}</span>
+              </div>
+              <div className="dp-rem-actions">
+                <button type="button" className="btn-primary dp-rem-cta" onClick={()=>dpDismissReminderPop(true, false)}>Set up my reminder</button>
+                <button type="button" className="btn-secondary" onClick={()=>dpDismissReminderPop(false, false)}>Not now</button>
+                <button type="button" className="link-btn dp-rem-dont" onClick={()=>dpDismissReminderPop(false, true)}>Don't show this again</button>
+              </div>
+              <p className="dp-rem-note">The real alarm rings even with your phone locked.</p>
             </div>
           </div>
         </div>
@@ -2537,7 +2544,7 @@ export default function App() {
                       <span className={`dp-fold-chev${earnHistoryOpen ? ' open' : ''}`} aria-hidden="true">▸</span>
                     </button>
                     {earnHistoryOpen && (
-                      <div className="sp-card">
+                      <div className="sp-card dp-fold-body">
                         <div className="sp-rh">
                           {(rateDraft || []).map((p, i) => (
                             <div className={`sp-rh-row${p.from > todayKey ? ' future' : ''}`} key={p.from}>
