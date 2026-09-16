@@ -764,6 +764,20 @@ export default function App() {
       regularAmt: one(rAmt), weekendAmt: one(wAmt), otAmt: one(oAmt), holidayAmt: one(hAmt), yearRate: one(rates) }
   }, [attendance, year, realYear, realMonth, startMonthKey])
 
+  // v24.3 — yearly share model: the SETTLED monthly logic (payslipModel) applied
+  // to the whole year and to each month. Month<->year agreement is structural:
+  // every figure here is computed by the same function as the monthly payslip.
+  const yearSlip = useMemo(() => {
+    const recs = Object.keys(attendance).filter(k => k.startsWith(`${year}-`)).map(k => attendance[k])
+    const model = payslipModel(recs)
+    const months = Array.from({ length: 12 }, (_, m) => {
+      const mp = `${year}-${String(m + 1).padStart(2, '0')}-`
+      const mm = payslipModel(recs.filter(r => r && r.date && r.date.startsWith(mp)))
+      return { month: m, actual: mm.actualDays, equiv: mm.totalEquiv, total: mm.total }
+    })
+    return { model, months }
+  }, [attendance, year])
+
   const todayKey = formatDateKey(new Date())
 
   // v18 rate periods — the rate in force on a given day (falls back to
@@ -1292,6 +1306,14 @@ export default function App() {
     return `DayPay_Payslip_${getMonthName(month)}_${year}_${displayName || 'Employee'}.pdf`
   }
 
+  // v24.3 — settled explainer sentences, shared by the monthly payslip and the yearly summary.
+  const SLIP_EXPLAIN = {
+    twoX: 'Weekend and overtime work are paid at 2× the normal daily rate and count as two paid-day equivalents each.',
+    premium: 'Premium days are paid above the normal daily rate, so each counts as more than one paid-day equivalent. See Breakdown.',
+    regular: 'Every day was worked at the normal daily rate, so actual days and paid-day equivalents match.',
+    mixed: 'Rates changed during this period — each day is valued at the rate in force when it was worked.',
+  }
+
   // v24.2 — payslip source data: this month's stored records + the payslip
   // model (actual days vs paid-day equivalents). Read-only by construction.
   function monthSlip() {
@@ -1369,16 +1391,10 @@ export default function App() {
     infoBox(14, 'ACTUAL DAYS WORKED', String(M.actualDays))
     infoBox(107, 'PAID-DAY EQUIVALENTS', fmtEquiv(M.totalEquiv))
     y += 22
-    const EXPLAIN = {
-      twoX: 'Weekend and overtime work are paid at 2× the normal daily rate and count as two paid-day equivalents each.',
-      premium: 'Premium days are paid above the normal daily rate, so each counts as more than one paid-day equivalent. See Breakdown.',
-      regular: 'Every day was worked at the normal daily rate, so actual days and paid-day equivalents match.',
-      mixed: 'Rates changed during this period — each day is valued at the rate in force when it was worked.',
-    }
     const ek = explainerKind(M)
     if (ek !== 'none') {
       F('normal', 9); C(GRAY)
-      const exLines = doc.splitTextToSize(EXPLAIN[ek], 182)
+      const exLines = doc.splitTextToSize(SLIP_EXPLAIN[ek], 182)
       doc.text(exLines, 14, y)
       y += exLines.length * 4.6 + 5
     } else { y += 2 }
@@ -1554,129 +1570,210 @@ export default function App() {
   }
 
   function generateYearlyDoc() {
+    // v24.3 — yearly share restructured on the SETTLED monthly principle:
+    // actual days worked vs paid-day equivalents, same equation box, same
+    // breakdown columns, plus a per-month table (actual/equiv/amount) whose
+    // figures are computed by the same payslipModel as the monthly payslip —
+    // month<->year agreement is structural. Embedded Inter (see v24.2).
     const doc = new jsPDF()
+    registerPayslipFonts(doc)
     const pageW = doc.internal.pageSize.getWidth()
+    const NAVY = [11, 27, 50], GREEN = [21, 128, 61], INK = [51, 65, 85]
+    const GRAY = [100, 116, 139], FAINT = [148, 163, 184]
+    const FILL = [241, 245, 249], HAIR = [226, 232, 240]
+    const final = year !== realYear
+    const statusText = final ? 'FINAL' : 'IN PROGRESS'
+    const Y = yearSlip.model
+    const F = (style, size) => { doc.setFont('DayPayInter', style); doc.setFontSize(size) }
+    const C = (c) => doc.setTextColor(c[0], c[1], c[2])
+    const label = (t, x, y) => { F('bold', 9); C(GRAY); doc.text(t.toUpperCase(), x, y) }
 
-    // DayPay branding
-    doc.setFillColor(11,27,50) // Navy #0B1B32
-    doc.rect(0,0,pageW,28,'F')
-    doc.setFont('helvetica','bold')
-    doc.setFontSize(18)
-    doc.setTextColor(255,255,255)
-    // Brand mark: refined stacked squares
-    doc.setFillColor(22,163,74)
+    // ── Header band ──
+    doc.setFillColor(...NAVY)
+    doc.rect(0, 0, pageW, 30, 'F')
+    doc.setFillColor(22, 163, 74)
     doc.roundedRect(18, 10.5, 16, 16, 4, 4, 'F')
-    doc.setFillColor(255,255,255)
+    doc.setFillColor(255, 255, 255)
     doc.roundedRect(14, 6.5, 16, 16, 4, 4, 'F')
-    doc.text('DayPay', 37, 18)
-    doc.setFontSize(10)
-    doc.setTextColor(21,128,61) // Green
-    doc.text('Know what your work is worth.', 62, 18)
-    doc.setFontSize(9)
-    doc.setTextColor(255,255,255)
-    doc.text(`Yearly Summary ${year}`, pageW-14, 18, { align: 'right' })
+    F('bold', 17); C([255, 255, 255]); doc.text('DayPay', 37, 18.5)
+    F('normal', 9); C([203, 213, 225]); doc.text('Know what your work is worth.', 62, 18.5)
+    F('bold', 9.5); C([255, 255, 255]); doc.text(`Yearly Summary ${year}`, 196, 13.5, { align: 'right' })
+    F('bold', 8)
+    const pillW = doc.getTextWidth(statusText) + 9
+    doc.setFillColor(...(final ? GREEN : [71, 85, 105]))
+    doc.roundedRect(196 - pillW, 17, pillW, 7, 3.5, 3.5, 'F')
+    C([255, 255, 255]); doc.text(statusText, 196 - 4.5, 21.9, { align: 'right' })
 
-    // Employee info
-    doc.setTextColor(11,27,50)
-    doc.setFontSize(14)
-    doc.setFont('helvetica','bold')
-    doc.text(displayName || 'Employee', 14, 40)
-    doc.setFontSize(10)
-    doc.setFont('helvetica','normal')
-    doc.setTextColor(100,100,100)
-    doc.text(user?.email || 'Local user', 14, 46)
-    doc.text(`Daily Rate: ${yearlyStats.days > 0 ? (yearlyStats.yearRate != null ? formatNaira(yearlyStats.yearRate) : 'mixed (rate history)') : formatNaira(rateForDate(`${year}-01-01`).dailyRate)} | Weekend/OT: ${rateForDate(`${year}-01-01`).weekendMultiplier}× | Holiday: ${rateForDate(`${year}-01-01`).holidayMultiplier}×`, 14, 52)
-    const yearStatus = year === realYear ? 'IN PROGRESS' : 'FINAL'
-    doc.text(`Period: January – December ${year} | Status: ${yearStatus}`, 14, 58)
-
-    // Summary
-    doc.setFont('helvetica','bold')
-    doc.setTextColor(11,27,50)
-    doc.setFontSize(12)
-    doc.text('Yearly Summary', 14, 70)
-    doc.setFontSize(22)
-    doc.setTextColor(21,128,61)
-    doc.text(formatNaira(yearlyStats.total), 14, 80)
-    doc.setFontSize(10)
-    doc.setTextColor(100,100,100)
-    doc.setFont('helvetica','normal')
-    doc.text(`${yearlyStats.days} days worked · ${yearlyStats.regularDays} regular · ${yearlyStats.weekendDays} weekend · ${yearlyStats.overtimeDays} OT · ${yearlyStats.holidayDays} holiday · ${yearlyStats.leaveDays} leave`, 14, 86)
-
-    // Breakdown
-    let y = 96
-    doc.setFont('helvetica','bold')
-    doc.setTextColor(11,27,50)
-    doc.setFontSize(11)
-    doc.text('Breakdown', 14, y)
-    y += 6
-    doc.setFont('helvetica','normal')
-    doc.setFontSize(10)
-    const ypdfRow = (label, n, pay, amt) => [label, `${n} days`, (amt && n > 0 && n * amt === pay) ? `${n} × ${formatNaira(amt)}` : (n > 0 ? 'mixed rates' : '—'), formatNaira(pay)]
-    const yrows = [
-      ypdfRow('Regular', yearlyStats.regularDays, yearlyStats.regularPay, yearlyStats.regularAmt),
-      ypdfRow('Weekend 2×', yearlyStats.weekendDays, yearlyStats.weekendPay, yearlyStats.weekendAmt),
-      ypdfRow('Overtime OT 2×', yearlyStats.overtimeDays, yearlyStats.otPay, yearlyStats.otAmt),
-      ypdfRow('Holiday 2×', yearlyStats.holidayDays, yearlyStats.holidayPay, yearlyStats.holidayAmt),
-      ['Leave', `${yearlyStats.leaveDays} days`, 'per your leave settings', formatNaira(yearlyStats.leavePay)],
-    ]
-    yrows.forEach(r => {
-      doc.text(r[0], 14, y)
-      doc.text(r[1], 50, y)
-      doc.text(r[2], 80, y)
-      doc.text(r[3], 150, y)
-      y += 6
-    })
-    y += 4
-    doc.setFont('helvetica','bold')
-    doc.text(`Total for ${year}: ${formatNaira(yearlyStats.total)}`, 14, y)
-    if (settings.salaryGoal > 0) {
-      y += 6
-      doc.setFont('helvetica','normal')
-      doc.setTextColor(100,100,100)
-      doc.text(`Yearly goal: ${formatNaira(settings.salaryGoal * 12)} · ${goalProgressYear}% reached`, 14, y)
+    // ── Employee ──
+    F('bold', 14); C(NAVY); doc.text(displayName || 'Employee', 14, 40)
+    F('normal', 9.5); C(GRAY); doc.text(user?.email || 'Local user', 14, 45.5)
+    const block = (x, lab, val) => {
+      F('bold', 7.5); C(GRAY); doc.text(lab, x, 53)
+      F('bold', 11); C(NAVY); doc.text(val, x, 58.5)
     }
+    const periodLabel = (() => {
+      if (startMonthKey) {
+        const { year: sY, month: sM } = parseMonthKey(startMonthKey)
+        if (sY === year) return `${getMonthName(sM)} – December ${year}`
+      }
+      return `January – December ${year}`
+    })()
+    block(14, 'PAY PERIOD', periodLabel)
+    if (Y.singleRate != null) {
+      block(77, 'NORMAL RATE', `${fmtMoney(Y.singleRate)}/day`)
+      const pm = Y.typicalPremiumMult
+      block(140, pm == null ? '2× RATE' : `${fmtEquiv(pm)}× RATE`, pm == null ? '—' : `${fmtMoney(Y.singleRate * pm)}/day`)
+    } else if (Y.actualDays === 0 && Y.leaveDays === 0) {
+      const r0 = rateForDate(`${year}-01-01`)
+      block(77, 'NORMAL RATE', `${fmtMoney(r0.dailyRate)}/day`)
+      block(140, `${r0.weekendMultiplier}× RATE`, `${fmtMoney(r0.dailyRate * r0.weekendMultiplier)}/day`)
+    } else {
+      F('normal', 9); C(GRAY)
+      doc.text('Mixed rates — see Breakdown for per-day values.', 77, 58)
+    }
+
+    // ── Yearly summary ──
+    let y = 68
+    label('Yearly summary', 14, y); y += 10
+    F('bold', 26); C(GREEN); doc.text(fmtMoney(Y.total), 14, y); y += 6.5
+    F('normal', 9.5); C(GRAY); doc.text(final ? 'Total Earnings' : 'Total so far', 14, y); y += 5
+    const infoBox = (x, lab, val) => {
+      doc.setFillColor(...FILL); doc.roundedRect(x, y, 89, 17, 2.5, 2.5, 'F')
+      F('bold', 7.5); C(GRAY); doc.text(lab, x + 5, y + 6)
+      F('bold', 16); C(NAVY); doc.text(val, x + 5, y + 13.5)
+    }
+    infoBox(14, 'ACTUAL DAYS WORKED', String(Y.actualDays))
+    infoBox(107, 'PAID-DAY EQUIVALENTS', fmtEquiv(Y.totalEquiv))
+    y += 22
+    const ek = explainerKind(Y)
+    if (ek !== 'none') {
+      F('normal', 9); C(GRAY)
+      const exLines = doc.splitTextToSize(SLIP_EXPLAIN[ek], 182)
+      doc.text(exLines, 14, y)
+      y += exLines.length * 4.6 + 5
+    } else { y += 2 }
+
+    // ── Year calculation (same equation renderer as the monthly payslip) ──
+    label('Year calculation', 14, y); y += 5.5
+    F('normal', 8.5)
+    const rendered = calcLines(Y).map(l => {
+      if (l.kind === 'note') { const wrap = doc.splitTextToSize(l.text, 162); return { ...l, wrap, h: wrap.length * 4.4 + 3 } }
+      if (l.kind === 'total' || l.kind === 'totalKV') return { ...l, h: 9.5 }
+      return { ...l, h: 6.2 }
+    })
+    const boxH = 9 + rendered.reduce((s, l) => s + l.h, 0)
+    doc.setFillColor(...FILL); doc.roundedRect(14, y, 182, boxH, 2.5, 2.5, 'F')
+    doc.setFillColor(...GREEN); doc.rect(17, y + 4, 1.6, boxH - 8, 'F')
+    let ly = y + 7
+    const LX = 26, RX = 188
+    for (const l of rendered) {
+      if (l.kind === 'step') { F('normal', 10); C(INK); doc.text(l.text, LX, ly); ly += l.h }
+      else if (l.kind === 'result') {
+        doc.setDrawColor(...HAIR); doc.setLineWidth(0.3); doc.line(LX, ly - 3.4, RX, ly - 3.4)
+        F('bold', 10); C(NAVY); doc.text(l.text, LX, ly); ly += l.h
+      }
+      else if (l.kind === 'math') { F('normal', 10.5); C(INK); doc.text(l.text, LX, ly); ly += l.h }
+      else if (l.kind === 'total') {
+        doc.setDrawColor(...NAVY); doc.setLineWidth(0.5); doc.line(LX, ly - 3.2, RX, ly - 3.2)
+        F('bold', 12.5); C(GREEN); doc.text(l.text, LX, ly + 1); ly += l.h
+      }
+      else if (l.kind === 'kv') {
+        F('normal', 10); C(INK); doc.text(l.left, LX, ly)
+        doc.text(l.right, RX, ly, { align: 'right' }); ly += l.h
+      }
+      else if (l.kind === 'note') { F('normal', 8.5); C(GRAY); doc.text(l.wrap, LX, ly); ly += l.h }
+      else if (l.kind === 'totalKV') {
+        doc.setDrawColor(...NAVY); doc.setLineWidth(0.5); doc.line(LX, ly - 3.2, RX, ly - 3.2)
+        F('bold', 11); C(NAVY); doc.text(l.left, LX, ly + 1)
+        C(GREEN); doc.text(l.right, RX, ly + 1, { align: 'right' }); ly += l.h
+      }
+    }
+    y += boxH + 10
+
+    // ── Breakdown (same columns as the monthly payslip) ──
+    label('Breakdown', 14, y); y += 6
+    const B = breakdownRows(Y)
+    F('bold', 8); C(GRAY)
+    doc.text('WORK TYPE', 14, y)
+    doc.text('ACTUAL DAYS', 82, y, { align: 'center' })
+    doc.text('PAID-DAY EQUIV.', 113, y, { align: 'center' })
+    doc.text('RATE', 137, y)
+    doc.text('AMOUNT', 196, y, { align: 'right' })
+    y += 2.5
+    doc.setDrawColor(...HAIR); doc.setLineWidth(0.3); doc.line(14, y, 196, y); y += 5.5
+    B.forEach((r, i) => {
+      if (i % 2 === 1) { doc.setFillColor(...FILL); doc.rect(14, y - 4.4, 182, 7, 'F') }
+      F('normal', 9.5); C(INK); doc.text(r.label, 14, y)
+      doc.text(String(r.actual), 82, y, { align: 'center' })
+      F('bold', 9.5); C(NAVY); doc.text(r.equivText, 113, y, { align: 'center' })
+      F('normal', 9.5); C(GRAY); doc.text(r.rateText, 137, y)
+      C(INK); doc.text(fmtMoney(r.amount), 196, y, { align: 'right' })
+      y += 7
+    })
+    doc.setDrawColor(...NAVY); doc.setLineWidth(0.5); doc.line(14, y - 2.5, 196, y - 2.5)
+    F('bold', 10); C(NAVY); doc.text('TOTAL', 14, y + 2.5)
+    doc.text(String(Y.actualDays), 82, y + 2.5, { align: 'center' })
+    doc.text(fmtEquiv(Y.totalEquiv), 113, y + 2.5, { align: 'center' })
+    F('bold', 10.5); C(GREEN); doc.text(fmtMoney(Y.total), 196, y + 2.5, { align: 'right' })
     y += 12
 
-    // Monthly breakdown
-    doc.setFont('helvetica','bold')
-    doc.setTextColor(11,27,50)
-    doc.setFontSize(11)
-    doc.text(`Monthly Breakdown — ${year}`, 14, y)
-    y += 6
-    doc.setFont('helvetica','normal')
-    doc.setFontSize(9)
-    doc.setTextColor(80,80,80)
-    doc.text('Month', 14, y)
-    doc.text('Days', 80, y)
-    doc.text('Amount', 130, y)
-    y += 4
-    doc.setDrawColor(200,200,200)
-    doc.line(14, y, pageW-14, y)
-    y += 6
-    const months = getYearMonthsForShare().filter(m => m.days > 0 || m.total > 0)
-    const best = months.reduce((a, m) => (m.total > (a ? a.total : -1) ? m : a), null)
-    months.forEach(m => {
-      const isBest = best && m.month === best.month && m.total > 0 && months.length > 1
-      doc.text(getMonthName(m.month), 14, y)
-      doc.text(`${m.days}d`, 80, y)
-      if (isBest) { doc.setFont('helvetica','bold'); doc.setTextColor(21,128,61) }
-      doc.text(m.total > 0 ? formatNaira(m.total) : '₦0', 130, y)
-      if (isBest) { doc.setFont('helvetica','normal'); doc.setTextColor(80,80,80) }
-      y += 6
+    // ── Monthly breakdown (per-month figures from the same model) ──
+    const yMonths = getYearMonthsForShare().filter(m => m.days > 0 || m.total > 0)
+    const best = yMonths.reduce((a, m) => (m.total > (a ? a.total : -1) ? m : a), null)
+    const rowsFitM = Math.floor((264 - (y + 6 + 8)) / 6.4)
+    if (yMonths.length > rowsFitM && rowsFitM < 4) { doc.addPage(); y = 18 }
+    label(`Monthly breakdown — ${year}`, 14, y); y += 6
+    const mHead = () => {
+      F('bold', 8); C(GRAY)
+      doc.text('MONTH', 14, y)
+      doc.text('ACTUAL', 82, y, { align: 'center' })
+      doc.text('EQUIV.', 113, y, { align: 'center' })
+      doc.text('AMOUNT', 196, y, { align: 'right' })
+      y += 2.5
+      doc.setDrawColor(...HAIR); doc.setLineWidth(0.3); doc.line(14, y, 196, y); y += 5.5
+    }
+    mHead()
+    yMonths.forEach((m, i) => {
+      if (y > 264) { doc.addPage(); y = 18; mHead() }
+      const isBest = best && m.month === best.month && m.total > 0 && yMonths.length > 1
+      if (i % 2 === 1) { doc.setFillColor(...FILL); doc.rect(14, y - 4.2, 182, 6.4, 'F') }
+      const ym = yearSlip.months[m.month]
+      F('normal', 9); C(INK); doc.text(getMonthName(m.month), 14, y)
+      doc.text(String(ym.actual), 82, y, { align: 'center' })
+      F('bold', 9); C(NAVY); doc.text(fmtEquiv(ym.equiv), 113, y, { align: 'center' })
+      if (isBest) { F('bold', 9); C(GREEN) } else { F('normal', 9); C(INK) }
+      doc.text(fmtMoney(ym.total), 196, y, { align: 'right' })
+      y += 6.4
     })
-    y += 2
-    doc.setFont('helvetica','bold')
-    doc.setTextColor(11,27,50)
-    doc.text(`Total ${year}`, 14, y)
-    doc.setTextColor(21,128,61)
-    doc.text(formatNaira(yearlyStats.total), 130, y)
+    doc.setDrawColor(...NAVY); doc.setLineWidth(0.5); doc.line(14, y - 2, 196, y - 2)
+    F('bold', 10); C(NAVY); doc.text(`Total ${year}`, 14, y + 3)
+    doc.text(String(Y.actualDays), 82, y + 3, { align: 'center' })
+    doc.text(fmtEquiv(Y.totalEquiv), 113, y + 3, { align: 'center' })
+    F('bold', 10.5); C(GREEN); doc.text(fmtMoney(Y.total), 196, y + 3, { align: 'right' })
+    y += 9
+    if (settings.salaryGoal > 0) {
+      F('normal', 9); C(GRAY)
+      doc.text(`Yearly goal: ${fmtMoney(settings.salaryGoal * 12)} · ${goalProgressYear}% reached`, 14, y)
+      y += 6
+    }
 
-    // Footer
-    doc.setFontSize(8)
-    doc.setTextColor(150,150,150)
-    doc.text(`DayPay — Know what your work is worth. Generated ${new Date().toLocaleString()} · ${displayName || 'Employee'} · ${startMonthKey ? `Started ${startMonthKey}` : ''}`, 14, 290)
-    doc.text(`© 2026 Akaninyene. All rights reserved.`, 14, 294)
+    // ── Total band ──
+    if (y > 252) { doc.addPage(); y = 18 }
+    doc.setFillColor(...NAVY); doc.roundedRect(14, y, 182, 16, 2.5, 2.5, 'F')
+    F('bold', 10.5); C([255, 255, 255]); doc.text(`TOTAL EARNINGS · ${year} · ${statusText}`, 20, y + 10.2)
+    F('bold', 14); doc.text(fmtMoney(Y.total), 190, y + 10.5, { align: 'right' })
 
+    // ── Footers (every page) ──
+    const pages = doc.getNumberOfPages()
+    const started = startMonthKey ? (() => { const { year: sy, month: sm } = parseMonthKey(startMonthKey); return ` · Started ${getMonthName(sm)} ${sy}` })() : ''
+    const footName = (displayName || 'Employee').slice(0, 24)
+    for (let p = 1; p <= pages; p++) {
+      doc.setPage(p)
+      F('normal', 7.5); C(FAINT)
+      doc.text(`DayPay — Know what your work is worth. · Generated ${fmtStamp()} · ${footName}${started}`, 14, 285)
+      doc.text(`Page ${p} of ${pages}`, 196, 285, { align: 'right' })
+      doc.text('© 2026 Akaninyene. All rights reserved.', 14, 289.5)
+    }
     return doc
   }
 
@@ -1692,7 +1789,8 @@ export default function App() {
       `📊 DayPay Yearly Summary — ${year}`,
       ``,
       `Total: ${formatNaira(yearlyStats.total)}`,
-      `${yearlyStats.days} days worked · ${yearlyStats.regularDays} regular · ${yearlyStats.weekendDays} weekend · ${yearlyStats.overtimeDays} OT · ${yearlyStats.holidayDays} holiday · ${yearlyStats.leaveDays} leave`,
+      `${yearlyStats.days} days worked · ${fmtEquiv(yearSlip.model.totalEquiv)} paid-day equivalents`,
+      `${yearlyStats.regularDays} regular · ${yearlyStats.weekendDays} weekend · ${yearlyStats.overtimeDays} OT · ${yearlyStats.holidayDays} holiday · ${yearlyStats.leaveDays} leave`,
     ]
     if (best && best.total > 0) lines.push(`Best month: ${getMonthName(best.month)} · ${formatNaira(best.total)}`)
     if (settings.salaryGoal > 0) lines.push(`Yearly goal: ${formatNaira(settings.salaryGoal * 12)} · ${goalProgressYear}% reached`)
@@ -1709,7 +1807,7 @@ export default function App() {
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({
           files: [file],
-          text: `DayPay Yearly Summary — ${year}: ${formatNaira(yearlyStats.total)} · ${yearlyStats.days} days worked`,
+          text: `DayPay Yearly Summary — ${year}: ${formatNaira(yearlyStats.total)} · ${yearlyStats.days} days worked · ${fmtEquiv(yearSlip.model.totalEquiv)} paid-day equiv`,
           title: 'DayPay Yearly Summary',
         })
         return
@@ -2265,7 +2363,7 @@ export default function App() {
                 <div className="yt-amount dp-count"><AnimatedAmount value={yearlyStats.total} /></div>
                 <div className="yt-label">
                   {year===realYear ? `Total earned this year` : year < realYear ? `Total earned in ${year} — Final` : `Future year`}
-                  {displayName ? ` · ${displayName}` : ''} · {yearlyStats.days} days{yearlyStats.leaveDays>0 ? ` · ${yearlyStats.leaveDays} on leave` : ''} · Goal {formatNaira(settings.salaryGoal)} · {goalProgressYear}% of yearly goal
+                  {displayName ? ` · ${displayName}` : ''} · {yearlyStats.days} days worked · {fmtEquiv(yearSlip.model.totalEquiv)} paid-day equiv{yearlyStats.leaveDays>0 ? ` · ${yearlyStats.leaveDays} on leave` : ''} · Goal {formatNaira(settings.salaryGoal)} · {goalProgressYear}% of yearly goal
                 </div>
                 {year===realYear && (
                   <div className="yt-sub">
@@ -2274,9 +2372,24 @@ export default function App() {
                 )}
               </div>
               <div className="yt-grid">
-                <div className="yt-item"><div className="yt-num mono">{yearlyStats.days}</div><div className="yt-cap">Days worked</div></div>
-                <div className="yt-item"><div className="yt-num mono">{yearlyStats.overtimeDays}</div><div className="yt-cap">OT days</div></div>
-                <div className="yt-item"><div className="yt-num mono">{yearlyStats.weekendDays + yearlyStats.holidayDays}</div><div className="yt-cap">Weekend+Hol</div></div>
+                <div className="yt-item"><div className="yt-num mono">{yearlyStats.days}</div><div className="yt-cap">Actual days worked</div><div className="yt-sub2">Actual days you physically worked</div></div>
+                <div className="yt-item"><div className="yt-num mono">{fmtEquiv(yearSlip.model.totalEquiv)}</div><div className="yt-cap">Paid-day equivalents</div><div className="yt-sub2">Normal-rate days your work is worth</div></div>
+              </div>
+
+              <div className="annual-breakdown">
+                <div className="ab-title">Earnings breakdown — {year}</div>
+                <div className="summary-rows">
+                  {[
+                    { label: 'Regular', stamp: 'ok', stampText: 'OK', g: yearSlip.model.groups[0] },
+                    { label: 'Weekend', stamp: 'x2', stampText: '2×', g: yearSlip.model.groups[1] },
+                    { label: 'Overtime', stamp: 'ot', stampText: 'OT 2×', g: yearSlip.model.groups[2] },
+                    { label: 'Holiday', stamp: 'hol', stampText: 'HOL 2×', g: yearSlip.model.groups[3] },
+                  ].map(r => (
+                    <div className="summary-row" key={r.label}><span>{r.label} <span className={`mini-stamp ${r.stamp}`}>{r.stampText}</span></span><span className="yb-vals"><span className="mono">{formatNaira(r.g.amount)}</span><span className="yb-sub mono">{r.g.actual} actual · {fmtEquiv(r.g.equiv)} equiv</span></span></div>
+                  ))}
+                  <div className="summary-row"><span>Leave <span className="mini-stamp lv">LV</span></span><span className="yb-vals"><span className="mono">{formatNaira(yearSlip.model.leavePay)}</span><span className="yb-sub mono">{yearSlip.model.leaveDays}d{yearSlip.model.leaveDays>0 ? ' · paid separately' : ''}</span></span></div>
+                  <div className="summary-row" style={{marginTop:4, paddingTop:10, borderTop:'1px dashed var(--border)'}}><span><strong>Yearly total</strong></span><span className="yb-vals"><span className="mono" style={{fontWeight:800, color:'var(--daypay-green)', fontSize:'14px'}}>{formatNaira(yearSlip.model.total)}</span><span className="yb-sub mono">{yearSlip.model.actualDays} actual · {fmtEquiv(yearSlip.model.totalEquiv)} equiv</span></span></div>
+                </div>
               </div>
 
               <div className="annual-breakdown">
@@ -2295,7 +2408,7 @@ export default function App() {
                         {m.status==='locked' ? <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> : m.status==='active' ? <svg width="10" height="10" viewBox="0 0 24 24" fill="var(--daypay-green)"><circle cx="12" cy="12" r="8"/></svg> : m.status==='future' ? <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> : <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>}
                         <span>{m.status==='locked'?'Locked':m.status==='active'?'Active':m.status==='future'?'Upcoming':'Before start'}</span>
                       </span>
-                      <span className="ab-days mono">{m.days>0?`${m.days}d`:'—'}</span>
+                      <span className="ab-days mono">{m.days>0?`${m.days}d · ${fmtEquiv(yearSlip.months[m.month].equiv)}eq`:'—'}</span>
                       <span className="ab-amount mono">{m.total>0?formatNaira(m.total):'₦0'}</span>
                     </div>
                   )
@@ -2306,6 +2419,7 @@ export default function App() {
                 })() && (
                   <div className="ab-total">
                     <span>Total {year} {startMonthKey && year===parseMonthKey(startMonthKey).year ? `(from ${getMonthName(parseMonthKey(startMonthKey).month)})` : ''}</span>
+                    <span className="mono ab-total-mid">{yearSlip.model.actualDays}d · {fmtEquiv(yearSlip.model.totalEquiv)}eq</span>
                     <span className="mono" style={{color:'var(--daypay-green)'}}>{formatNaira(yearlyStats.total)}</span>
                   </div>
                 )}
