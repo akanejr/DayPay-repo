@@ -5,7 +5,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
 import { sortPeriods, migratePeriods, rateFor as rateForPeriod } from './lib/rates'
-import { normalizeReminder, nextReminder, describeReminder, buildReminderIcs } from './lib/reminders'
+import { normalizeReminder, nextReminder, buildReminderIcs } from './lib/reminders'
 import jsPDF from 'jspdf'
 
 const STORAGE_KEY = 'work_tracker_v1'
@@ -2502,7 +2502,7 @@ export default function App() {
                 )}
 
                 {spCat === 'appearance' && (
-                  <div className="sp-card">
+                  <div className="sp-card sp-appear-card">
                     <div className="app-tiles">
                       <button type="button" className={`app-tile${theme==='light' ? ' on' : ''}`} onClick={()=>setTheme('light')} aria-pressed={theme==='light'}>
                         <span className="app-sw sw-light" aria-hidden="true" />
@@ -2677,7 +2677,7 @@ export default function App() {
                         <div className="sp-rem-label">Time of day</div>
                         <div className="sp-rem-time-row">
                           <input type="time" className="sp-rem-time" value={reminder.time} onChange={e => { if (e.target.value) dpReminderPatch({ time: e.target.value }) }} aria-label="Reminder time" />
-                          <span className="sp-rem-summary mono">{describeReminder(reminder.days, reminder.time)}</span>
+                          <span className="sp-rem-summary mono">{reminder.days.length ? `${remDaysShort(reminder.days)} · ${time12(reminder.time)}` : 'No days selected'}</span>
                         </div>
 
                         <div className="sp-rem-label">How it reaches you</div>
@@ -2724,7 +2724,7 @@ export default function App() {
                     <div className="sp-section-label">Your data</div>
                     <div className="sp-card">
                       <div className="sp-kv"><span>Cloud sync</span><span className="sp-kv-val" style={{color: isSupabaseConfigured ? 'var(--green-ink)' : 'var(--danger)'}}>{isSupabaseConfigured ? (user ? 'Connected' : 'Ready — sign in') : 'Not configured'}</span></div>
-                      <div className="sp-kv"><span>Tracking started</span><span className="sp-kv-val">{startMonthKey || 'Not set'}</span></div>
+                      <div className="sp-kv"><span>Tracking started</span><span className="sp-kv-val">{startMonthKey ? (()=>{const {year, month}=parseMonthKey(startMonthKey); return `${getMonthName(month)} ${year}`})() : 'Not set'}</span></div>
                       <div className="sp-kv"><span>Current month</span><span className="sp-kv-val">{getMonthName(realMonth)} {realYear} · Active</span></div>
                     </div>
                   </>

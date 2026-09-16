@@ -1408,6 +1408,8 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .summary-top .dp-fold { margin-top: var(--sp-2); }
 
 /* ===== v18: Appearance picker (Light · Dark · Glass) ===== */
+/* v24.1 — padded composition for the appearance card (tiles + flavor row) */
+.sp-appear-card { padding: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-3); }
 .app-tiles { display: flex; gap: var(--sp-2); }
 .app-tile { flex: 1; display: flex; flex-direction: column; align-items: center; gap: var(--sp-2); padding: var(--sp-3) var(--sp-2) 8px; border-radius: 12px; border: 1.5px solid var(--border); background: var(--bg-elevated); color: var(--text-2); font-family: inherit; font-size: var(--fs-xs); font-weight: 700; cursor: pointer; }
 .app-tile.on { border-color: var(--green-ink); color: var(--green-ink); background: var(--green-wash); }
@@ -1415,7 +1417,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .app-sw.sw-light { background: linear-gradient(180deg, #FFFFFF 55%, #F2F8F4 100%); }
 .app-sw.sw-dark { background: linear-gradient(180deg, #0C1425 55%, #080C16 100%); }
 .app-sw.sw-glass { background: radial-gradient(120% 90% at 85% -10%, rgba(34,222,94,.4), transparent 55%), radial-gradient(130% 100% at -10% 110%, rgba(30,64,110,.6), transparent 60%), #080C16; border-color: rgba(255,255,255,.28); }
-.app-flavor { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); flex-wrap: wrap; }
+.app-flavor { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
 .app-flavor-lbl { font-size: var(--fs-xs); font-weight: 700; color: var(--text-3); }
 .app-flavor-btn { border: 1px solid var(--border); background: transparent; color: var(--text-2); border-radius: 999px; padding: var(--sp-2) var(--sp-3); font-size: var(--fs-xs); font-weight: 700; cursor: pointer; font-family: inherit; }
 .app-flavor-btn.on { border-color: var(--green-ink); color: var(--green-ink); background: var(--green-wash); }
@@ -1656,7 +1658,7 @@ button:not(#dp-press-skip):active:not(:disabled) { transform: scale(0.96); }
 .sp-rem-body {
   display: flex; flex-direction: column; gap: var(--sp-4);
   margin-top: var(--sp-4);
-  padding-top: var(--sp-4);
+  padding: var(--sp-4); /* v24.1: inset to align with the row above + clear the bottom edge */
   border-top: 1px dashed var(--border);
 }
 .sp-rem-label {
@@ -1665,11 +1667,14 @@ button:not(#dp-press-skip):active:not(:disabled) { transform: scale(0.96); }
   color: var(--text-3);
 }
 .sp-rem-days { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+/* v24.1: ≤382px viewports can't fit 7 chips + 8px gaps (needs 314px content) — tighten the gaps so all 7 days stay on one row */
+@media (max-width: 382px) { .sp-rem-days { gap: var(--sp-1); } }
 .sp-rem-day {
-  min-width: 44px;
-  padding: var(--sp-2) var(--sp-3);
+  flex: 1 1 0; /* v24.1: equal shares — one row of 7 wherever it fits */
+  min-width: 36px; /* content floor ("Wed" + insets) — wrap, never clip */
+  padding: var(--sp-2) var(--sp-1);
   text-align: center;
-  font-size: var(--fs-sm); font-weight: 500;
+  font-size: var(--fs-xs); font-weight: 500;
   font-family: 'Manrope', sans-serif;
   color: var(--text-2);
   background: transparent;
@@ -1775,7 +1780,8 @@ button:not(#dp-press-skip):active:not(:disabled) { transform: scale(0.96); }
 .sp-crumb { font-size: var(--fs-xs); font-weight: 700; color: var(--text-3); letter-spacing: 0.02em; }
 .sp-cat-anim { animation: viewIn 240ms cubic-bezier(0.22, 1, 0.36, 1); }
 /* Earnings — current rate card */
-.sp-rate-card { display: flex; flex-direction: column; gap: 3px; }
+/* v24.1 — padded composition: cap + value must clear the card edges (was 0px) */
+.sp-rate-card { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-4); }
 .sp-rate-cap {
   display: flex; align-items: center; gap: var(--sp-2);
   font-family: 'Geist Mono', monospace;

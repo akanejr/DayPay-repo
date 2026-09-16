@@ -12,7 +12,6 @@
 */
 
 const DAY_CODE = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA']
-const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 /* Normalize a stored reminder (cloud/local jsonb) into a safe shape.
    days = JS Date.getDay() values 0 (Sun) – 6 (Sat); time = "HH:MM". */
@@ -41,13 +40,8 @@ export function nextReminder(days, time, from = new Date()) {
   return null
 }
 
-/* Human summary, Monday-first: "Mon · Wed · Fri · 18:00" / "Every day". */
-export function describeReminder(days, time) {
-  if (!days || !days.length) return 'No days selected'
-  if (days.length === 7) return `Every day · ${time}`
-  const ordered = [...days].sort((a, b) => (a + 6) % 7 - (b + 6) % 7)
-  return `${ordered.map(d => DAY_NAMES[d]).join(' · ')} · ${time}`
-}
+/* v24.1 — describeReminder retired: the settings summary now uses remDaysShort
+   + time12, shared with the pop-card chip and the category line ("Mon–Fri · 6:00 PM"). */
 
 /* Recurring .ics with a VALARM at the start. DTSTART is a floating local
    time, so the calendar app rings it at that local time on each match.
