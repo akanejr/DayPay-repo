@@ -7,6 +7,8 @@ import { supabase, isSupabaseConfigured } from './lib/supabase'
 import { sortPeriods, migratePeriods, rateFor as rateForPeriod } from './lib/rates'
 import { normalizeReminder, nextReminder, buildReminderIcs } from './lib/reminders'
 import jsPDF from 'jspdf'
+import { payslipModel, breakdownRows, attendanceRows, calcLines, explainerKind, fmtMoney, fmtEquiv, fmtStamp } from './lib/payslip'
+import { registerPayslipFonts } from './lib/payslipFonts'
 
 const STORAGE_KEY = 'work_tracker_v1'
 // v19-D: splash version — the splash is an occasion (first run + version
@@ -1290,126 +1292,206 @@ export default function App() {
     return `DayPay_Payslip_${getMonthName(month)}_${year}_${displayName || 'Employee'}.pdf`
   }
 
-  function generatePayslipDoc() {
-    const doc = new jsPDF()
-    const pageW = doc.internal.pageSize.getWidth()
-    
-    // DayPay branding
-    doc.setFillColor(11,27,50) // Navy #0B1B32
-    doc.rect(0,0,pageW,28,'F')
-    doc.setFont('helvetica','bold')
-    doc.setFontSize(18)
-    doc.setTextColor(255,255,255)
-    // Brand mark: refined stacked squares
-    doc.setFillColor(22,163,74)
-    doc.roundedRect(18, 10.5, 16, 16, 4, 4, 'F')
-    doc.setFillColor(255,255,255)
-    doc.roundedRect(14, 6.5, 16, 16, 4, 4, 'F')
-    doc.text('DayPay', 37, 18)
-    doc.setFontSize(10)
-    doc.setTextColor(21,128,61) // Green
-    doc.text('Know what your work is worth.', 62, 18)
-    doc.setFontSize(9)
-    doc.setTextColor(255,255,255)
-    doc.text(`${getMonthName(month)} ${year} Payslip`, pageW-14, 18, { align: 'right' })
-
-    // Employee info
-    doc.setTextColor(11,27,50)
-    doc.setFontSize(14)
-    doc.setFont('helvetica','bold')
-    doc.text(displayName || 'Employee', 14, 40)
-    doc.setFontSize(10)
-    doc.setFont('helvetica','normal')
-    doc.setTextColor(100,100,100)
-    doc.text(user?.email || 'Local user', 14, 46)
-    doc.text(`Daily Rate: ${monthlyStats.days > 0 ? (monthlyStats.monthRate != null ? formatNaira(monthlyStats.monthRate) : 'mixed (rate history)') : formatNaira(rateForDate(`${year}-${String(month + 1).padStart(2, '0')}-01`).dailyRate)} | Weekend/OT/Holiday: ${rateForDate(`${year}-${String(month + 1).padStart(2, '0')}-01`).weekendMultiplier}×`, 14, 52)
-    doc.text(`Period: ${getMonthName(month)} ${year} | Status: ${monthStatus.toUpperCase()} ${monthStatus==='locked' ? '(FINAL)' : '(IN PROGRESS)'}`, 14, 58)
-
-    // Summary
-    doc.setFont('helvetica','bold')
-    doc.setTextColor(11,27,50)
-    doc.setFontSize(12)
-    doc.text('Salary Summary', 14, 70)
-    doc.setFontSize(22)
-    doc.setTextColor(21,128,61)
-    doc.text(formatNaira(monthlyStats.total), 14, 80)
-    doc.setFontSize(10)
-    doc.setTextColor(100,100,100)
-    doc.setFont('helvetica','normal')
-    doc.text(`${monthlyStats.days} days worked · ${monthlyStats.regularDays} regular · ${monthlyStats.weekendDays} weekend · ${monthlyStats.overtimeDays} OT · ${monthlyStats.holidayDays} holiday · ${monthlyStats.leaveDays} leave`, 14, 86)
-
-    // Breakdown
-    let y = 96
-    doc.setFont('helvetica','bold')
-    doc.setTextColor(11,27,50)
-    doc.setFontSize(11)
-    doc.text('Breakdown', 14, y)
-    y+=6
-    doc.setFont('helvetica','normal')
-    doc.setFontSize(10)
-    const pdfRow = (label, n, pay, amt) => [label, `${n} days`, (amt && n > 0 && n * amt === pay) ? `${n} × ${formatNaira(amt)}` : (n > 0 ? 'mixed rates' : '—'), formatNaira(pay)]
-    const rows = [
-      pdfRow('Regular', monthlyStats.regularDays, monthlyStats.regularPay, monthlyStats.regularAmt),
-      pdfRow('Weekend 2×', monthlyStats.weekendDays, monthlyStats.weekendPay, monthlyStats.weekendAmt),
-      pdfRow('Overtime OT 2×', monthlyStats.overtimeDays, monthlyStats.otPay, monthlyStats.otAmt),
-      pdfRow('Holiday 2×', monthlyStats.holidayDays, monthlyStats.holidayPay, monthlyStats.holidayAmt),
-      ['Leave', `${monthlyStats.leaveDays} days`, 'per your leave settings', formatNaira(monthlyStats.leavePay)],
-    ]
-    rows.forEach(r => {
-      doc.text(r[0], 14, y)
-      doc.text(r[1], 50, y)
-      doc.text(r[2], 80, y)
-      doc.text(r[3], 150, y)
-      y+=6
-    })
-    y+=4
-    doc.setFont('helvetica','bold')
-    doc.text(`Final Salary for ${getMonthName(month)} ${year}: ${formatNaira(monthlyStats.total)}`, 14, y)
-    y+=10
-
-    // Attendance list
-    doc.setFontSize(11)
-    doc.text('Attendance Details', 14, y)
-    y+=6
-    doc.setFontSize(9)
-    doc.setFont('helvetica','normal')
-    doc.setTextColor(80,80,80)
-    // Table header
-    doc.text('Date', 14, y)
-    doc.text('Day', 35, y)
-    doc.text('Type', 65, y)
-    doc.text('Rate', 95, y)
-    doc.text('Amount', 130, y)
-    y+=4
-    doc.setDrawColor(200,200,200)
-    doc.line(14, y, pageW-14, y)
-    y+=6
-
+  // v24.2 — payslip source data: this month's stored records + the payslip
+  // model (actual days vs paid-day equivalents). Read-only by construction.
+  function monthSlip() {
     const prefix = `${year}-${String(month + 1).padStart(2, '0')}-`
-    const entries = Object.keys(attendance).filter(k=>k.startsWith(prefix)).sort().map(k=>attendance[k])
-    entries.forEach(rec => {
-      if (y > 280) { doc.addPage(); y = 20 }
-      const d = new Date(rec.date)
-      const dayName = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()]
-      const type = rec.isLeave ? leaveLabel(rec.leaveType) : rec.isWeekend ? 'Weekend 2×' : rec.isOvertime ? 'Overtime OT' : rec.isHoliday ? `Holiday ${rec.holidayName ? `(${rec.holidayName})` : ''}` : 'Regular'
-      doc.text(rec.date, 14, y)
-      doc.text(dayName, 35, y)
-      doc.text(type, 65, y)
-      doc.text(formatNaira(rec.rate), 95, y)
-      doc.setTextColor(21,128,61)
-      doc.setFont('helvetica','bold')
-      doc.text(formatNaira(rec.amount), 130, y)
-      doc.setFont('helvetica','normal')
-      doc.setTextColor(80,80,80)
-      y+=6
+    const recs = Object.keys(attendance).filter(k => k.startsWith(prefix)).map(k => attendance[k])
+    return { recs, model: payslipModel(recs, { leaveName: (id) => leaveLabel(id) }) }
+  }
+
+  function generatePayslipDoc() {
+    // v24.2 — restructured payslip: the actual-days vs paid-day-equivalents
+    // distinction is the backbone (summary boxes, equation, breakdown +
+    // attendance "Equiv." columns). Embedded Inter renders ₦/×/·/— exactly;
+    // helvetica's missing ₦ was the old "116,000 / $16,000" artifact source.
+    const doc = new jsPDF()
+    registerPayslipFonts(doc)
+    const pageW = doc.internal.pageSize.getWidth()
+    const NAVY = [11, 27, 50], GREEN = [21, 128, 61], INK = [51, 65, 85]
+    const GRAY = [100, 116, 139], FAINT = [148, 163, 184]
+    const FILL = [241, 245, 249], HAIR = [226, 232, 240]
+    const locked = monthStatus === 'locked'
+    const statusText = locked ? 'LOCKED · FINAL' : 'IN PROGRESS'
+    const { recs, model: M } = monthSlip()
+    const monthTitle = `${getMonthName(month)} ${year}`
+    const F = (style, size) => { doc.setFont('DayPayInter', style); doc.setFontSize(size) }
+    const C = (c) => doc.setTextColor(c[0], c[1], c[2])
+    const label = (t, x, y) => { F('bold', 9); C(GRAY); doc.text(t.toUpperCase(), x, y) }
+
+    // ── Header band ──
+    doc.setFillColor(...NAVY)
+    doc.rect(0, 0, pageW, 30, 'F')
+    doc.setFillColor(22, 163, 74)
+    doc.roundedRect(18, 10.5, 16, 16, 4, 4, 'F')
+    doc.setFillColor(255, 255, 255)
+    doc.roundedRect(14, 6.5, 16, 16, 4, 4, 'F')
+    F('bold', 17); C([255, 255, 255]); doc.text('DayPay', 37, 18.5)
+    F('normal', 9); C([203, 213, 225]); doc.text('Know what your work is worth.', 62, 18.5)
+    F('bold', 9.5); C([255, 255, 255]); doc.text(`${monthTitle} Payslip`, 196, 13.5, { align: 'right' })
+    F('bold', 8)
+    const pillW = doc.getTextWidth(statusText) + 9
+    doc.setFillColor(...(locked ? GREEN : [71, 85, 105]))
+    doc.roundedRect(196 - pillW, 17, pillW, 7, 3.5, 3.5, 'F')
+    C([255, 255, 255]); doc.text(statusText, 196 - 4.5, 21.9, { align: 'right' })
+
+    // ── Employee ──
+    F('bold', 14); C(NAVY); doc.text(displayName || 'Employee', 14, 40)
+    F('normal', 9.5); C(GRAY); doc.text(user?.email || 'Local user', 14, 45.5)
+    const block = (x, lab, val) => {
+      F('bold', 7.5); C(GRAY); doc.text(lab, x, 53)
+      F('bold', 11); C(NAVY); doc.text(val, x, 58.5)
+    }
+    block(14, 'PAY PERIOD', monthTitle)
+    if (M.singleRate != null) {
+      block(77, 'NORMAL RATE', `${fmtMoney(M.singleRate)}/day`)
+      const pm = M.typicalPremiumMult
+      block(140, pm == null ? '2× RATE' : `${fmtEquiv(pm)}× RATE`, pm == null ? '—' : `${fmtMoney(M.singleRate * pm)}/day`)
+    } else if (M.actualDays === 0 && M.leaveDays === 0) {
+      const r0 = rateForDate(`${year}-${String(month + 1).padStart(2, '0')}-01`)
+      block(77, 'NORMAL RATE', `${fmtMoney(r0.dailyRate)}/day`)
+      block(140, `${r0.weekendMultiplier}× RATE`, `${fmtMoney(r0.dailyRate * r0.weekendMultiplier)}/day`)
+    } else {
+      F('normal', 9); C(GRAY)
+      doc.text('Mixed rates — see Breakdown for per-day values.', 77, 58)
+    }
+
+    // ── Salary summary ──
+    let y = 68
+    label('Salary summary', 14, y); y += 10
+    F('bold', 26); C(GREEN); doc.text(fmtMoney(M.total), 14, y); y += 6.5
+    F('normal', 9.5); C(GRAY); doc.text(locked ? 'Final Salary' : 'Total so far', 14, y); y += 5
+    const infoBox = (x, lab, val) => {
+      doc.setFillColor(...FILL); doc.roundedRect(x, y, 89, 17, 2.5, 2.5, 'F')
+      F('bold', 7.5); C(GRAY); doc.text(lab, x + 5, y + 6)
+      F('bold', 16); C(NAVY); doc.text(val, x + 5, y + 13.5)
+    }
+    infoBox(14, 'ACTUAL DAYS WORKED', String(M.actualDays))
+    infoBox(107, 'PAID-DAY EQUIVALENTS', fmtEquiv(M.totalEquiv))
+    y += 22
+    const EXPLAIN = {
+      twoX: 'Weekend and overtime work are paid at 2× the normal daily rate and count as two paid-day equivalents each.',
+      premium: 'Premium days are paid above the normal daily rate, so each counts as more than one paid-day equivalent. See Breakdown.',
+      regular: 'Every day was worked at the normal daily rate, so actual days and paid-day equivalents match.',
+      mixed: 'Rates changed during this period — each day is valued at the rate in force when it was worked.',
+    }
+    const ek = explainerKind(M)
+    if (ek !== 'none') {
+      F('normal', 9); C(GRAY)
+      const exLines = doc.splitTextToSize(EXPLAIN[ek], 182)
+      doc.text(exLines, 14, y)
+      y += exLines.length * 4.6 + 5
+    } else { y += 2 }
+
+    // ── Pay calculation ──
+    label('Pay calculation', 14, y); y += 5.5
+    F('normal', 8.5)
+    const rendered = calcLines(M).map(l => {
+      if (l.kind === 'note') { const wrap = doc.splitTextToSize(l.text, 162); return { ...l, wrap, h: wrap.length * 4.4 + 3 } }
+      if (l.kind === 'total' || l.kind === 'totalKV') return { ...l, h: 9.5 }
+      return { ...l, h: 6.2 }
     })
+    const boxH = 9 + rendered.reduce((s, l) => s + l.h, 0)
+    doc.setFillColor(...FILL); doc.roundedRect(14, y, 182, boxH, 2.5, 2.5, 'F')
+    doc.setFillColor(...GREEN); doc.rect(17, y + 4, 1.6, boxH - 8, 'F')
+    let ly = y + 7
+    const LX = 26, RX = 188
+    for (const l of rendered) {
+      if (l.kind === 'step') { F('normal', 10); C(INK); doc.text(l.text, LX, ly); ly += l.h }
+      else if (l.kind === 'result') {
+        doc.setDrawColor(...HAIR); doc.setLineWidth(0.3); doc.line(LX, ly - 3.4, RX, ly - 3.4)
+        F('bold', 10); C(NAVY); doc.text(l.text, LX, ly); ly += l.h
+      }
+      else if (l.kind === 'math') { F('normal', 10.5); C(INK); doc.text(l.text, LX, ly); ly += l.h }
+      else if (l.kind === 'total') {
+        doc.setDrawColor(...NAVY); doc.setLineWidth(0.5); doc.line(LX, ly - 3.2, RX, ly - 3.2)
+        F('bold', 12.5); C(GREEN); doc.text(l.text, LX, ly + 1); ly += l.h
+      }
+      else if (l.kind === 'kv') {
+        F('normal', 10); C(INK); doc.text(l.left, LX, ly)
+        doc.text(l.right, RX, ly, { align: 'right' }); ly += l.h
+      }
+      else if (l.kind === 'note') { F('normal', 8.5); C(GRAY); doc.text(l.wrap, LX, ly); ly += l.h }
+      else if (l.kind === 'totalKV') {
+        doc.setDrawColor(...NAVY); doc.setLineWidth(0.5); doc.line(LX, ly - 3.2, RX, ly - 3.2)
+        F('bold', 11); C(NAVY); doc.text(l.left, LX, ly + 1)
+        C(GREEN); doc.text(l.right, RX, ly + 1, { align: 'right' }); ly += l.h
+      }
+    }
+    y += boxH + 10
 
-    // Footer
-    doc.setFontSize(8)
-    doc.setTextColor(150,150,150)
-    doc.text(`DayPay — Know what your work is worth. Generated ${new Date().toLocaleString()} · ${displayName || 'Employee'} · ${startMonthKey ? `Started ${startMonthKey}` : ''}`, 14, 290)
-    doc.text(`© 2026 Akaninyene. All rights reserved.`, 14, 294)
+    // ── Breakdown ──
+    label('Breakdown', 14, y); y += 6
+    const B = breakdownRows(M)
+    F('bold', 8); C(GRAY)
+    doc.text('WORK TYPE', 14, y)
+    doc.text('ACTUAL DAYS', 82, y, { align: 'center' })
+    doc.text('PAID-DAY EQUIV.', 113, y, { align: 'center' })
+    doc.text('RATE', 137, y)
+    doc.text('AMOUNT', 196, y, { align: 'right' })
+    y += 2.5
+    doc.setDrawColor(...HAIR); doc.setLineWidth(0.3); doc.line(14, y, 196, y); y += 5.5
+    B.forEach((r, i) => {
+      if (i % 2 === 1) { doc.setFillColor(...FILL); doc.rect(14, y - 4.4, 182, 7, 'F') }
+      F('normal', 9.5); C(INK); doc.text(r.label, 14, y)
+      doc.text(String(r.actual), 82, y, { align: 'center' })
+      F('bold', 9.5); C(NAVY); doc.text(r.equivText, 113, y, { align: 'center' })
+      F('normal', 9.5); C(GRAY); doc.text(r.rateText, 137, y)
+      C(INK); doc.text(fmtMoney(r.amount), 196, y, { align: 'right' })
+      y += 7
+    })
+    doc.setDrawColor(...NAVY); doc.setLineWidth(0.5); doc.line(14, y - 2.5, 196, y - 2.5)
+    F('bold', 10); C(NAVY); doc.text('TOTAL', 14, y + 2.5)
+    doc.text(String(M.actualDays), 82, y + 2.5, { align: 'center' })
+    doc.text(fmtEquiv(M.totalEquiv), 113, y + 2.5, { align: 'center' })
+    F('bold', 10.5); C(GREEN); doc.text(fmtMoney(M.total), 196, y + 2.5, { align: 'right' })
+    y += 12
 
+    // ── Attendance details ──
+    const A = attendanceRows(recs, { leaveName: (id) => leaveLabel(id) })
+    // v24.2 — orphan rule: if the section would split with fewer than 5 rows
+    // on this page, move the label + whole table to the next page instead.
+    const rowsFit = Math.floor((264 - (y + 6 + 8)) / 6.4)
+    if (A.length > rowsFit && rowsFit < 5) { doc.addPage(); y = 18 }
+    label('Attendance details', 14, y); y += 6
+    const attHead = () => {
+      F('bold', 8); C(GRAY)
+      doc.text('DATE', 14, y); doc.text('DAY', 44, y); doc.text('TYPE', 60, y)
+      doc.text('RATE', 116, y); doc.text('EQUIV.', 150, y, { align: 'center' })
+      doc.text('AMOUNT', 196, y, { align: 'right' })
+      y += 2.5
+      doc.setDrawColor(...HAIR); doc.setLineWidth(0.3); doc.line(14, y, 196, y); y += 5.5
+    }
+    attHead()
+    A.forEach((r, i) => {
+      if (y > 264) { doc.addPage(); y = 18; attHead() }
+      if (i % 2 === 1) { doc.setFillColor(...FILL); doc.rect(14, y - 4.2, 182, 6.4, 'F') }
+      F('normal', 9); C(INK)
+      doc.text(r.date, 14, y); doc.text(r.day, 44, y); doc.text(r.type, 60, y)
+      C(GRAY); doc.text(r.rate, 116, y)
+      F('bold', 9); C(NAVY); doc.text(r.equiv, 150, y, { align: 'center' })
+      F('normal', 9); C(INK); doc.text(r.amount, 196, y, { align: 'right' })
+      y += 6.4
+    })
+    y += 4
+
+    // ── Final salary band ──
+    if (y > 252) { doc.addPage(); y = 18 }
+    doc.setFillColor(...NAVY); doc.roundedRect(14, y, 182, 16, 2.5, 2.5, 'F')
+    F('bold', 10.5); C([255, 255, 255]); doc.text(`FINAL SALARY · ${monthTitle} · ${statusText}`, 20, y + 10.2)
+    F('bold', 14); doc.text(fmtMoney(M.total), 190, y + 10.5, { align: 'right' })
+
+    // ── Footers (every page) ──
+    const pages = doc.getNumberOfPages()
+    const started = startMonthKey ? (() => { const { year: sy, month: sm } = parseMonthKey(startMonthKey); return ` · Started ${getMonthName(sm)} ${sy}` })() : ''
+    const footName = (displayName || 'Employee').slice(0, 24)
+    for (let p = 1; p <= pages; p++) {
+      doc.setPage(p)
+      F('normal', 7.5); C(FAINT)
+      doc.text(`DayPay — Know what your work is worth. · Generated ${fmtStamp()} · ${footName}${started}`, 14, 285)
+      doc.text(`Page ${p} of ${pages}`, 196, 285, { align: 'right' })
+      doc.text('© 2026 Akaninyene. All rights reserved.', 14, 289.5)
+    }
     return doc
   }
 
@@ -1423,7 +1505,8 @@ export default function App() {
       `📊 DayPay Payslip — ${getMonthName(month)} ${year}`,
       ``,
       `Total: ${formatNaira(monthlyStats.total)}`,
-      `${monthlyStats.days} days worked · ${monthlyStats.regularDays} regular · ${monthlyStats.weekendDays} weekend · ${monthlyStats.overtimeDays} OT · ${monthlyStats.holidayDays} holiday · ${monthlyStats.leaveDays} leave`,
+      `${monthlyStats.days} days worked · ${monthSlip().model.totalEquiv} paid-day equivalents`,
+      `${monthlyStats.regularDays} regular · ${monthlyStats.weekendDays} weekend · ${monthlyStats.overtimeDays} OT · ${monthlyStats.holidayDays} holiday · ${monthlyStats.leaveDays} leave`,
     ]
     if (monthlyStats.regularDays > 0) lines.push(`Regular: ${rateLine(monthlyStats.regularDays, monthlyStats.regularPay, monthlyStats.regularAmt)}`)
     if (monthlyStats.weekendDays > 0) lines.push(`Weekend 2×: ${rateLine(monthlyStats.weekendDays, monthlyStats.weekendPay, monthlyStats.weekendAmt)}`)
@@ -1444,7 +1527,7 @@ export default function App() {
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({
           files: [file],
-          text: `DayPay Payslip — ${getMonthName(month)} ${year}: ${formatNaira(monthlyStats.total)} · ${monthlyStats.days} days worked`,
+          text: `DayPay Payslip — ${getMonthName(month)} ${year}: ${formatNaira(monthlyStats.total)} · ${monthlyStats.days} days worked · ${monthSlip().model.totalEquiv} paid-day equiv`,
           title: 'DayPay Payslip',
         })
         return
