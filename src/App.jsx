@@ -335,6 +335,8 @@ export default function App() {
   const [recoveryError, setRecoveryError] = useState('')
 
   const [editingKey, setEditingKey] = useState(null)
+  const [showUnlockConfirm, setShowUnlockConfirm] = useState(false)
+  const [unlockEditConfirm, setUnlockEditConfirm] = useState(null)
   const [editingDate, setEditingDate] = useState(null)
 
   const [showHamburgerMenu, setShowHamburgerMenu] = useState(false)
@@ -517,6 +519,7 @@ export default function App() {
             salaryGoal: parsed.settings.salaryGoal ?? 500000,
             paydayDay: parsed.settings.paydayDay ?? 0,
             startMonthKey: parsed.settings.startMonthKey,
+            unlockedMonths: parsed.settings.unlockedMonths ?? [],
             reminder: normalizeReminder(parsed.settings.reminder)
           }
           const earliest = Object.keys(parsed.attendance || {}).sort()[0]
@@ -611,6 +614,7 @@ export default function App() {
           const rtc = rateForPeriod(cs.ratePeriods, formatDateKey(nowCloud), cs)
           cs.dailyRate = rtc.dailyRate; cs.weekendMultiplier = rtc.weekendMultiplier; cs.holidayMultiplier = rtc.holidayMultiplier
           cs.reminder = normalizeReminder(mergedSettings.reminder)
+          cs.unlockedMonths = mergedSettings.unlockedMonths ?? []
           setSettings(cs)
           setGoalInput(String(mergedSettings.salaryGoal ?? 500000))
           setPaydayInput(String(mergedSettings.paydayDay ?? 0))
@@ -665,6 +669,13 @@ export default function App() {
 
   const monthStatus = getMonthStatus(year, month)
   const isEditable = monthStatus === 'active'
+  // v25 — explicit month unlock: a locked month the user chose to correct.
+  // Unlocked months allow removing/re-classifying LOGGED days only — empty
+  // dates stay locked (no new days in a closed month).
+  const viewMonthKey = `${year}-${String(month + 1).padStart(2, '0')}`
+  const isMonthKeyUnlocked = (k) => (settings.unlockedMonths || []).includes(k)
+  const isUnlocked = monthStatus === 'locked' && isMonthKeyUnlocked(viewMonthKey)
+  const displayStatus = isUnlocked ? 'unlocked' : monthStatus
 
   const calendarData = useMemo(() => {
     const firstDay = new Date(year, month, 1)
@@ -1036,11 +1047,16 @@ export default function App() {
 
   function handleCellClick(dateObj) {
     if (!dateObj) return
-    if (!isEditable) return
+    if (!isEditable && !isUnlocked) return
     const key = formatDateKey(dateObj)
     const record = attendance[key]
     const isWeekend = isWeekendDay(dateObj)
     const holiday = isHolidayDay(dateObj)
+    // v25 — unlocked month: logged days open for correction, empty dates stay locked.
+    if (isUnlocked) {
+      if (record) { setEditingKey(key); setEditingDate(dateObj) }
+      return
+    }
 
     if (isWeekend) {
       const r = rateForDate(key)
@@ -1089,67 +1105,107 @@ export default function App() {
 
   function handleEditButtonClick(e, dateObj) {
     e.stopPropagation()
-    if (!isEditable) return
+    if (!isEditable && !isUnlocked) return
     const key = formatDateKey(dateObj)
     setEditingKey(key)
     setEditingDate(dateObj)
   }
 
+  // v25 — pure re-classification: the record an edit action would produce
+  // (null = remove). Shared by the apply path and the unlock confirm preview.
+  function reclassifyRecord(rec, key, action) {
+    const r = rateForDate(key)
+    if (action === 'remove') return null
+    if (action === 'regular') {
+      return { ...rec, isOvertime: false, isWeekend: false, isHoliday: false, isLeave: false, leaveType: undefined, amount: r.dailyRate, multiplier: 1, holidayName: undefined }
+    }
+    if (action === 'overtime') {
+      const mult = r.weekendMultiplier
+      return { ...rec, isOvertime: true, isWeekend: false, isHoliday: false, isLeave: false, leaveType: undefined, amount: r.dailyRate * mult, multiplier: mult, holidayName: undefined }
+    }
+    if (action === 'holiday') {
+      const mult = r.holidayMultiplier
+      return { ...rec, isHoliday: true, isWeekend: false, isOvertime: false, isLeave: false, leaveType: undefined, amount: r.dailyRate * mult, multiplier: mult }
+    }
+    if (action.startsWith('leave-')) {
+      const leaveType = action.slice(6)
+      const amount = leavePayFor(ltById(leaveType), r.dailyRate)
+      return { ...rec, isOvertime: false, isWeekend: false, isHoliday: false, holidayName: undefined, isLeave: true, leaveType, amount, multiplier: r.dailyRate > 0 ? Math.round((amount / r.dailyRate) * 100) / 100 : 0 }
+    }
+    return rec
+  }
+
+  function recordTypeLabel(rec) {
+    if (!rec) return 'Removed'
+    if (rec.isLeave) return leaveLabel(rec.leaveType)
+    if (rec.isOvertime) return 'OT 2\u00d7'
+    if (rec.isWeekend) return 'Weekend 2\u00d7'
+    if (rec.isHoliday) return 'Holiday 2\u00d7'
+    return 'Regular'
+  }
+
   function handleOvertimeAction(action) {
     if (!editingKey) return
     const key = editingKey
-    if (action === 'remove') {
-      setAttendance(prev => { const next = { ...prev }; delete next[key]; return next })
-    } else if (action === 'regular') {
-      const r = rateForDate(key)
-      setAttendance(prev => {
-        const rec = prev[key]
-        if (!rec) return prev
-        return { ...prev, [key]: { ...rec, isOvertime: false, isWeekend: false, isHoliday: false, isLeave: false, leaveType: undefined, amount: r.dailyRate, multiplier: 1, holidayName: undefined } }
-      })
-    } else if (action === 'overtime') {
-      const r = rateForDate(key)
-      const oldRec = attendance[key]
-      setAttendance(prev => {
-        const rec = prev[key]
-        if (!rec) return prev
-        const mult = r.weekendMultiplier
-        return { ...prev, [key]: { ...rec, isOvertime: true, isWeekend: false, isHoliday: false, isLeave: false, leaveType: undefined, amount: r.dailyRate * mult, multiplier: mult, holidayName: undefined } }
-      })
-      // committed → enhanced confirmation with the actual increase
-      if (oldRec && !oldRec.isOvertime) {
-        const otDelta = r.dailyRate * r.weekendMultiplier - oldRec.amount
-        if (otDelta > 0) dpCelebrateSave(key, 'ot', otDelta)
-      }
-    } else if (action === 'holiday') {
-      const r = rateForDate(key)
-      const oldHol = attendance[key]
-      setAttendance(prev => {
-        const rec = prev[key]
-        if (!rec) return prev
-        const mult = r.holidayMultiplier
-        return { ...prev, [key]: { ...rec, isHoliday: true, isWeekend: false, isOvertime: false, isLeave: false, leaveType: undefined, amount: r.dailyRate * mult, multiplier: mult } }
-      })
-      if (oldHol && !oldHol.isHoliday) {
-        const holDelta = r.dailyRate * r.holidayMultiplier - oldHol.amount
-        if (holDelta > 0) dpCelebrateSave(key, 'holiday', holDelta)
-      }
+    const oldRec = attendance[key]
+    if (!oldRec) { setEditingKey(null); setEditingDate(null); return }
+    const r = rateForDate(key)
+    const next = reclassifyRecord(oldRec, key, action)
+    setAttendance(prev => {
+      if (!prev[key]) return prev
+      const nxt = { ...prev }
+      if (next === null) delete nxt[key]
+      else nxt[key] = next
+      return nxt
+    })
+    // committed → enhanced confirmations with actual deltas (unchanged)
+    if (action === 'overtime' && !oldRec.isOvertime) {
+      const otDelta = r.dailyRate * r.weekendMultiplier - oldRec.amount
+      if (otDelta > 0) dpCelebrateSave(key, 'ot', otDelta)
+    } else if (action === 'holiday' && !oldRec.isHoliday) {
+      const holDelta = r.dailyRate * r.holidayMultiplier - oldRec.amount
+      if (holDelta > 0) dpCelebrateSave(key, 'holiday', holDelta)
     } else if (action.startsWith('leave-')) {
-      const r = rateForDate(key)
-      const leaveType = action.slice(6)
-      const lt = ltById(leaveType)
-      const lvAmount = leavePayFor(lt, r.dailyRate)
-      setAttendance(prev => {
-        const rec = prev[key]
-        if (!rec) return prev
-        const amount = leavePayFor(lt, r.dailyRate)
-        return { ...prev, [key]: { ...rec, isOvertime: false, isWeekend: false, isHoliday: false, holidayName: undefined, isLeave: true, leaveType, amount, multiplier: r.dailyRate > 0 ? Math.round((amount / r.dailyRate) * 100) / 100 : 0 } }
-      })
-      // v19-A: leave saves get the same quiet cell pop as plain workdays
-      dpCelebrateSave(key, 'leave', lvAmount)
+      dpCelebrateSave(key, 'leave', next ? next.amount : 0)
     }
     setEditingKey(null)
     setEditingDate(null)
+  }
+
+  // v25 — edits in an unlocked month confirm first, showing the total change.
+  function requestEditAction(action) {
+    if (!isUnlocked || !editingKey) { handleOvertimeAction(action); return }
+    const rec = attendance[editingKey]
+    if (!rec) { handleOvertimeAction(action); return }
+    const next = reclassifyRecord(rec, editingKey, action)
+    const same = next !== null
+      && next.amount === rec.amount && next.multiplier === rec.multiplier
+      && !!next.isWeekend === !!rec.isWeekend && !!next.isOvertime === !!rec.isOvertime
+      && !!next.isHoliday === !!rec.isHoliday && !!next.isLeave === !!rec.isLeave
+      && (next.leaveType || null) === (rec.leaveType || null)
+    if (same) { setEditingKey(null); setEditingDate(null); return }
+    const dayNum = parseInt(editingKey.slice(8, 10), 10)
+    const dayLabel = `${getMonthName(parseInt(editingKey.slice(5, 7), 10) - 1, true)} ${dayNum}`
+    setUnlockEditConfirm({
+      action,
+      desc: next === null
+        ? `${dayLabel}: ${recordTypeLabel(rec)} \u00b7 ${formatNaira(rec.amount)} will be removed`
+        : `${dayLabel}: ${recordTypeLabel(rec)} \u2192 ${recordTypeLabel(next)} (${formatNaira(rec.amount)} \u2192 ${formatNaira(next.amount)})`,
+      oldTotal: monthlyStats.total,
+      newTotal: monthlyStats.total - rec.amount + (next ? next.amount : 0),
+    })
+  }
+
+  // v25 — explicit unlock: persisted in settings (syncs like the rest).
+  function unlockViewMonth() {
+    if (monthStatus !== 'locked') return
+    setSettings(s => ({ ...s, unlockedMonths: [...(s.unlockedMonths || []).filter(k => k !== viewMonthKey), viewMonthKey] }))
+    setShowUnlockConfirm(false)
+    dpShowToast({ variant: 'month', title: `${getMonthName(month)} unlocked`, sub: 'Tap a logged day to correct it' })
+  }
+  function lockViewMonth() {
+    setSettings(s => ({ ...s, unlockedMonths: (s.unlockedMonths || []).filter(k => k !== viewMonthKey) }))
+    dpShowToast({ variant: 'month', title: `${getMonthName(month)} locked`, sub: 'Read-only again' })
   }
 
   function handleExportJson() {
@@ -1823,6 +1879,7 @@ export default function App() {
 
   const statusConfig = {
     active: { label: 'Active', desc: 'Editable', icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="var(--daypay-green)"><circle cx="12" cy="12" r="8"/></svg>, color: '#16A34A' },
+    unlocked: { label: 'Unlocked', desc: 'Corrections allowed', icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.5-2"/></svg>, color: 'var(--amber)' },
     locked: { label: 'Locked', desc: 'Read only — Final', icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>, color: '#a1a1aa' },
     future: { label: 'Upcoming', desc: 'Not yet active', icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>, color: '#94a3b8' },
     before_start: { label: 'Before start', desc: 'Tracking started later', icon: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>, color: '#cbd5e1' },
@@ -2098,18 +2155,18 @@ export default function App() {
                 <span className="month-name">{getMonthName(month)}</span>
                 <span className="year-name" style={{display:'flex', gap:6, alignItems:'center'}}>
                   {year}
-                  <span className={`status-dot ${monthStatus}`} title={statusConfig[monthStatus]?.label} />
+                  <span className={`status-dot ${displayStatus}`} title={statusConfig[displayStatus]?.label} />
                   {startMonthKey && monthKey(year, month)===startMonthKey && <span style={{fontSize:'9px', background:'var(--daypay-navy)', border:'1px solid var(--daypay-navy)', padding:'1px 5px', borderRadius:4, marginLeft:4, color:'#ffffff'}}>START</span>}
                 </span>
               </div>
               <button className="nav-btn" onClick={goNextMonth}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m9 18 6-6-6-6"/></svg></button>
             </div>
 
-            <div className={`month-status-banner ${monthStatus}`}>
+            <div className={`month-status-banner ${displayStatus}`}>
               <div className="msb-left">
-                <span className="msb-icon">{statusConfig[monthStatus]?.icon}</span>
-                <span className="msb-label">{statusConfig[monthStatus]?.label}</span>
-                <span className="msb-desc">· {statusConfig[monthStatus]?.desc}</span>
+                <span className="msb-icon">{statusConfig[displayStatus]?.icon}</span>
+                <span className="msb-label">{statusConfig[displayStatus]?.label}</span>
+                <span className="msb-desc">· {statusConfig[displayStatus]?.desc}</span>
               </div>
               {monthStatus!=='active' && (
                 <button className="msb-action" onClick={goToCurrentMonth}>Go to current</button>
@@ -2118,9 +2175,14 @@ export default function App() {
 
             {monthStatus==='locked' && monthlyStats.days>0 && (
               <div className="final-salary-banner">
-                <div className="fsb-label">Final salary for {getMonthName(month)} {year}</div>
+                <div className="fsb-label">{isUnlocked ? `Correcting ${getMonthName(month)} ${year}` : `Final salary for ${getMonthName(month)} ${year}`}</div>
                 <div className="fsb-amount">{formatNaira(monthlyStats.total)}</div>
-                <div className="fsb-details">{monthlyStats.days} days · {monthlyStats.regularDays} regular · {monthlyStats.weekendDays} weekend · {monthlyStats.overtimeDays} OT · {monthlyStats.holidayDays} holiday · {monthlyStats.leaveDays} leave · Locked</div>
+                <div className="fsb-details">{monthlyStats.days} days · {monthlyStats.regularDays} regular · {monthlyStats.weekendDays} weekend · {monthlyStats.overtimeDays} OT · {monthlyStats.holidayDays} holiday · {monthlyStats.leaveDays} leave · {isUnlocked ? 'Unlocked' : 'Locked'}</div>
+                {isUnlocked ? (
+                  <button className="msb-action" style={{marginTop:10}} onClick={lockViewMonth}>Lock {getMonthName(month, true)} again</button>
+                ) : (
+                  <button className="msb-action" style={{marginTop:10}} onClick={()=>setShowUnlockConfirm(true)}>Unlock {getMonthName(month, true)} to correct a day</button>
+                )}
               </div>
             )}
 
@@ -2150,7 +2212,7 @@ export default function App() {
                 const isOvertime = record?.isOvertime
                 const isHol = record?.isHoliday || holiday
                 return (
-                  <button key={key} className={`cell ${worked?'worked':''} ${isWeekend?'is-weekend':''} ${isToday?'is-today':''} ${!isEditable?'locked-cell':''} ${isOvertime?'is-overtime':''} ${isHol?'is-holiday':''} ${record?.isLeave?'is-leave':''} ${record?.isLeave && record.amount===0?'is-leave-unpaid':''} ${dpJust && dpJust.key===key ? 'dp-just' : ''}`} onClick={()=>handleCellClick(dateObj)} disabled={!isEditable && !worked} title={record?.isLeave ? `${leaveLabel(record.leaveType)} — ${record.amount>0 ? 'Paid leave' : 'Unpaid leave'}` : holiday ? `${holiday.name} — ${isWeekend ? 'Weekend' : 'Holiday'} 2×` : isWeekend ? 'Weekend 2×' : 'Weekday'}>
+                  <button key={key} className={`cell ${worked?'worked':''} ${isWeekend?'is-weekend':''} ${isToday?'is-today':''} ${(!isEditable && !(isUnlocked && worked))?'locked-cell':''} ${isOvertime?'is-overtime':''} ${isHol?'is-holiday':''} ${record?.isLeave?'is-leave':''} ${record?.isLeave && record.amount===0?'is-leave-unpaid':''} ${dpJust && dpJust.key===key ? 'dp-just' : ''}`} onClick={()=>handleCellClick(dateObj)} disabled={!isEditable && !worked} title={record?.isLeave ? `${leaveLabel(record.leaveType)} — ${record.amount>0 ? 'Paid leave' : 'Unpaid leave'}` : holiday ? `${holiday.name} — ${isWeekend ? 'Weekend' : 'Holiday'} 2×` : isWeekend ? 'Weekend 2×' : 'Weekday'}>
                     <span className="date-num">{dateObj.getDate()}</span>
                     {holiday && !worked && <span className="holiday-dot" title={holiday.name}></span>}
                     {worked && (
@@ -2159,8 +2221,8 @@ export default function App() {
                       </span>
                     )}
                     {isToday && !worked && <span className="today-dot" />}
-                    {!isEditable && worked && <span className="locked-overlay"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>}
-                    {worked && !isWeekend && !record.isHoliday && isEditable && (
+                    {!isEditable && !isUnlocked && worked && <span className="locked-overlay"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>}
+                    {worked && !isWeekend && !record.isHoliday && (isEditable || isUnlocked) && (
                       <span className="edit-corner" onClick={(e)=>handleEditButtonClick(e, dateObj)} title="Edit to overtime">
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                       </span>
@@ -2208,7 +2270,7 @@ export default function App() {
               <div className="summary-top">
                 <div className="summary-amount dp-count">
                   <AnimatedAmount value={monthlyStats.total} />
-                  {monthStatus==='locked' && <span className="final-badge">FINAL</span>}
+                  {monthStatus==='locked' && (isUnlocked ? <span className="unlocked-badge">UNLOCKED</span> : <span className="final-badge">FINAL</span>)}
                   {monthStatus==='active' && <span className="active-badge">IN PROGRESS</span>}
                 </div>
                 {monthStatus==='active' && (
@@ -2223,7 +2285,7 @@ export default function App() {
                   </button>
                 )}
                 <div className="summary-sub">
-                  {displayName ? `${displayName} · ` : ''}{monthlyStats.days} day{monthlyStats.days!==1?'s':''} worked{monthlyStats.leaveDays>0 ? `, ${monthlyStats.leaveDays} on leave` : ''} {monthStatus==='locked' ? '· Locked' : monthStatus==='active' ? '· Editable' : ''} {isSupabaseConfigured && user && <span className="cloud-hint">· cloud synced</span>}
+                  {displayName ? `${displayName} · ` : ''}{monthlyStats.days} day{monthlyStats.days!==1?'s':''} worked{monthlyStats.leaveDays>0 ? `, ${monthlyStats.leaveDays} on leave` : ''} {monthStatus==='locked' ? (isUnlocked ? '· Unlocked' : '· Locked') : monthStatus==='active' ? '· Editable' : ''} {isSupabaseConfigured && user && <span className="cloud-hint">· cloud synced</span>}
                 </div>
 
                 {/* v18: read-only details collapsed by default — calendar closer to the top */}
@@ -2340,7 +2402,11 @@ export default function App() {
               )}
               {!isEditable && <div className="empty-hint locked-hint" style={{display:'flex', alignItems:'center', justifyContent:'center', gap:6}}>
                 {monthStatus==='locked' ? (
-                  <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Locked read-only. Final salary includes OT + holidays.</>
+                  isUnlocked ? (
+                    <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.5-2"/></svg> Unlocked — tap a logged day to correct or remove it. New days can&apos;t be added.</>
+                  ) : (
+                    <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Locked read-only. Final salary includes OT + holidays.</>
+                  )
                 ) : monthStatus==='future' ? (
                   <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Future — not yet active.</>
                 ) : 'Before start.'}
@@ -2367,7 +2433,7 @@ export default function App() {
                 </div>
                 {year===realYear && (
                   <div className="yt-sub">
-                    {yearlyStats.monthly.filter(m=>m.status==='locked').length} locked · {yearlyStats.monthly.filter(m=>m.status==='active').length} active · {yearlyStats.monthly.filter(m=>m.status==='future').length} upcoming · {yearlyStats.overtimeDays} OT · {yearlyStats.holidayDays} holidays{yearlyStats.leaveDays>0 ? ` · ${yearlyStats.leaveDays} leave` : ''}
+                    {(() => { const un = yearlyStats.monthly.filter(m=>m.status==='locked' && isMonthKeyUnlocked(`${year}-${String(m.month+1).padStart(2,'0')}`)).length; const lk = yearlyStats.monthly.filter(m=>m.status==='locked').length - un; return `${lk} locked${un>0 ? ` · ${un} unlocked` : ''}` })()} · {yearlyStats.monthly.filter(m=>m.status==='active').length} active · {yearlyStats.monthly.filter(m=>m.status==='future').length} upcoming · {yearlyStats.overtimeDays} OT · {yearlyStats.holidayDays} holidays{yearlyStats.leaveDays>0 ? ` · ${yearlyStats.leaveDays} leave` : ''}
                   </div>
                 )}
               </div>
@@ -2406,7 +2472,7 @@ export default function App() {
                       <span className="ab-month">{getMonthName(m.month, true)}</span>
                       <span className={`ab-status ${m.status}`} style={{display:'flex', alignItems:'center', gap:4}}>
                         {m.status==='locked' ? <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> : m.status==='active' ? <svg width="10" height="10" viewBox="0 0 24 24" fill="var(--daypay-green)"><circle cx="12" cy="12" r="8"/></svg> : m.status==='future' ? <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> : <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>}
-                        <span>{m.status==='locked'?'Locked':m.status==='active'?'Active':m.status==='future'?'Upcoming':'Before start'}</span>
+                        <span>{m.status==='locked'?(isMonthKeyUnlocked(`${year}-${String(m.month+1).padStart(2,'0')}`)?'Unlocked':'Locked'):m.status==='active'?'Active':m.status==='future'?'Upcoming':'Before start'}</span>
                       </span>
                       <span className="ab-days mono">{m.days>0?`${m.days}d · ${fmtEquiv(yearSlip.months[m.month].equiv)}eq`:'—'}</span>
                       <span className="ab-amount mono">{m.total>0?formatNaira(m.total):'₦0'}</span>
@@ -2483,7 +2549,7 @@ export default function App() {
                   </div>
                   <div className="mr-right">
                     <span className="mr-amount mono">{m.total>0?formatNaira(m.total):'₦0'}</span>
-                    {m.status==='locked' && <span className="mr-final">FINAL</span>}
+                    {m.status==='locked' && (isMonthKeyUnlocked(`${year}-${String(m.month+1).padStart(2,'0')}`) ? <span className="mr-unlocked">UNLOCKED</span> : <span className="mr-final">FINAL</span>)}
                     {m.status==='active' && <span className="mr-active">ACTIVE</span>}
                     <span className="mr-arrow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m9 18 6-6-6-6"/></svg></span>
                   </div>
@@ -2495,7 +2561,7 @@ export default function App() {
         </div>
 
         <div className="footer">
-          <span className="footer-dot" /> {displayName ? `${displayName} · ` : ''}{settings.dailyRate.toLocaleString('en-NG')} / day · {settings.weekendMultiplier}× OT/Hol/Weekend {monthStatus==='locked' ? '· locked' : monthStatus==='active' ? '· active' : ''} {isSupabaseConfigured && user ? '· synced' : '· local'} · PWA ready · © 2026 Akaninyene
+          <span className="footer-dot" /> {displayName ? `${displayName} · ` : ''}{settings.dailyRate.toLocaleString('en-NG')} / day · {settings.weekendMultiplier}× OT/Hol/Weekend {monthStatus==='locked' ? (isUnlocked ? '· unlocked' : '· locked') : monthStatus==='active' ? '· active' : ''} {isSupabaseConfigured && user ? '· synced' : '· local'} · PWA ready · © 2026 Akaninyene
         </div>
       </div>
 
@@ -2503,7 +2569,7 @@ export default function App() {
         <div className={`modal-overlay${editX.closing ? ' mo-out' : ''}`} onClick={()=>{setEditingKey(null); setEditingDate(null)}}>
           <div className={`modal${editX.closing ? ' m-out' : ''}`} onClick={e=>e.stopPropagation()} style={{maxWidth:360}}>
             <div className="modal-header">
-              <span>Edit {editingDate ? `${getMonthName(editingDate.getMonth())} ${editingDate.getDate()}, ${editingDate.getFullYear()}` : editingKey}</span>
+              <span>Edit {editingDate ? `${getMonthName(editingDate.getMonth())} ${editingDate.getDate()}, ${editingDate.getFullYear()}` : editingKey}{isUnlocked ? ' · correcting' : ''}</span>
               <button className="icon-btn small" onClick={()=>{setEditingKey(null); setEditingDate(null)}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
             </div>
             <div className="modal-body">
@@ -2514,15 +2580,15 @@ export default function App() {
                     <div className="info-row sub"><span>Date</span><span className="mono">{editingRecord.date}</span></div>
                   </div>
                   <div style={{marginTop:16, display:'flex', flexDirection:'column', gap:10}}>
-                    <button className={`ot-option ${!editingRecord.isWeekend && !editingRecord.isOvertime && !editingRecord.isHoliday && !editingRecord.isLeave ? 'selected' : ''}`} onClick={()=>handleOvertimeAction('regular')}>
+                    <button className={`ot-option ${!editingRecord.isWeekend && !editingRecord.isOvertime && !editingRecord.isHoliday && !editingRecord.isLeave ? 'selected' : ''}`} onClick={()=>requestEditAction('regular')}>
                       <span className="ot-opt-left"><span className="mini-stamp ok">OK</span> Regular</span>
                       <span className="mono">{formatNaira(editingRate.dailyRate)}</span>
                     </button>
-                    <button className={`ot-option ${editingRecord.isOvertime ? 'selected' : ''}`} onClick={()=>handleOvertimeAction('overtime')}>
+                    <button className={`ot-option ${editingRecord.isOvertime ? 'selected' : ''}`} onClick={()=>requestEditAction('overtime')}>
                       <span className="ot-opt-left"><span className="mini-stamp ot">OT</span> Overtime 2×</span>
                       <span className="mono">{formatNaira(editingRate.dailyRate * editingRate.weekendMultiplier)}</span>
                     </button>
-                    <button className={`ot-option ${editingRecord.isHoliday ? 'selected' : ''}`} onClick={()=>handleOvertimeAction('holiday')}>
+                    <button className={`ot-option ${editingRecord.isHoliday ? 'selected' : ''}`} onClick={()=>requestEditAction('holiday')}>
                       <span className="ot-opt-left"><span className="mini-stamp hol">HOL</span> Holiday 2×</span>
                       <span className="mono">{formatNaira(editingRate.dailyRate * editingRate.holidayMultiplier)}</span>
                     </button>
@@ -2531,19 +2597,63 @@ export default function App() {
                       const pay = leavePayFor(t, editingRate.dailyRate)
                       const initials = (t.name || 'LV').replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || 'LV'
                       return (
-                        <button key={t.id} className={`ot-option ${editingRecord.isLeave && editingRecord.leaveType===t.id ? 'selected' : ''}`} onClick={()=>handleOvertimeAction(`leave-${t.id}`)}>
+                        <button key={t.id} className={`ot-option ${editingRecord.isLeave && editingRecord.leaveType===t.id ? 'selected' : ''}`} onClick={()=>requestEditAction(`leave-${t.id}`)}>
                           <span className="ot-opt-left"><span className={`mini-stamp ${pay>0 ? 'lv' : 'lv-u'}`}>{initials}</span> {t.name}</span>
                           <span className="mono">{pay > 0 ? `${formatNaira(pay)}${t.payMode!=='flat' ? ` · ${t.payValue}%` : ''}` : formatNaira(0)}</span>
                         </button>
                       )
                     })}
-                    <button className="ot-option danger" onClick={()=>handleOvertimeAction('remove')}>
+                    <button className="ot-option danger" onClick={()=>requestEditAction('remove')}>
                       <span className="ot-opt-left"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Remove</span>
                       <span className="mono">Delete</span>
                     </button>
                   </div>
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* v25 — unlock confirmation: explicit, explains the consequences */}
+      {showUnlockConfirm && (
+        <div className="modal-overlay" onClick={()=>setShowUnlockConfirm(false)}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:360}}>
+            <div className="modal-header">
+              <span>Unlock {getMonthName(month)} {year}?</span>
+              <button className="icon-btn small" onClick={()=>setShowUnlockConfirm(false)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+            </div>
+            <div className="modal-body">
+              <div className="info-box" style={{marginTop:0}}>
+                <div className="info-row sub"><span>You&apos;ll be able to remove or re-classify days already logged in {getMonthName(month)}. New days can&apos;t be added.</span></div>
+                <div className="info-row sub"><span>Totals, payslip and yearly figures recalculate immediately. Anything already shared won&apos;t change.</span></div>
+              </div>
+              <div style={{marginTop:16, display:'flex', flexDirection:'column', gap:10}}>
+                <button className="btn-primary" onClick={unlockViewMonth}>Unlock {getMonthName(month, true)}</button>
+                <button className="btn-secondary" onClick={()=>setShowUnlockConfirm(false)}>Keep locked</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* v25 — per-edit confirmation: shows the total change before applying */}
+      {unlockEditConfirm && (
+        <div className="modal-overlay" onClick={()=>setUnlockEditConfirm(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:360}}>
+            <div className="modal-header">
+              <span>Apply this correction?</span>
+              <button className="icon-btn small" onClick={()=>setUnlockEditConfirm(null)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+            </div>
+            <div className="modal-body">
+              <div className="info-box" style={{marginTop:0}}>
+                <div className="info-row"><span>Change</span><span className="mono" style={{fontWeight:700, textAlign:'right'}}>{unlockEditConfirm.desc}</span></div>
+                <div className="info-row"><span>{getMonthName(month)} total</span><span className="mono" style={{fontWeight:700}}>{formatNaira(unlockEditConfirm.oldTotal)} → {formatNaira(unlockEditConfirm.newTotal)}</span></div>
+              </div>
+              <div style={{marginTop:16, display:'flex', flexDirection:'column', gap:10}}>
+                <button className="btn-primary" onClick={()=>{ const a = unlockEditConfirm.action; setUnlockEditConfirm(null); handleOvertimeAction(a) }}>Apply change</button>
+                <button className="btn-secondary" onClick={()=>setUnlockEditConfirm(null)}>Cancel</button>
+              </div>
             </div>
           </div>
         </div>
@@ -2777,7 +2887,7 @@ export default function App() {
                             <button type="button" className="sp-rh-add" onClick={()=>setRateForm({ from: todayKey, rate: '' })}>+ Add rate change</button>
                           )}
                           <div className="sp-rh-truth">
-                            {prevMonthTotal > 0 && <span className="sp-rh-chip">🔒 {getMonthName(realMonth === 0 ? 11 : realMonth - 1, true)} · {formatNaira(prevMonthTotal)} · frozen</span>}
+                            {prevMonthTotal > 0 && (() => { const pm = realMonth===0?11:realMonth-1; const py = realMonth===0?realYear-1:realYear; const un = isMonthKeyUnlocked(`${py}-${String(pm+1).padStart(2,'0')}`); return <span className="sp-rh-chip">{un?'🔓':'🔒'} {getMonthName(pm, true)} · {formatNaira(prevMonthTotal)} · {un?'unlocked':'frozen'}</span> })()}
                             <span className="sp-rh-chip">Now · {formatNaira(rateForPeriod(rateDraft || [], todayKey, settings).dailyRate)}/day</span>
                             {(rateDraft || []).filter(p => p.from > todayKey).slice(0, 1).map(p => (
                               <span className="sp-rh-chip hi" key={p.from}>{shortDate(p.from)} → {formatNaira(p.dailyRate)}</span>

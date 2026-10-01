@@ -468,6 +468,20 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .final-badge, .mr-final { color: var(--text-3); }
 .active-badge, .mr-active { color: var(--green-ink); }
+/* v25 — unlocked-month accents (amber = caution: a closed month is open) */
+.status-dot.unlocked { background: var(--amber); box-shadow: 0 0 0 3px var(--amber-wash); }
+.month-status-banner.unlocked { background: transparent; color: var(--text-2); }
+.month-status-banner.unlocked .msb-label, .month-status-banner.unlocked .msb-icon { color: var(--amber); }
+.unlocked-badge, .mr-unlocked {
+  font-family: 'Manrope', sans-serif; font-size: var(--fs-2xs); font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 0; margin: 0; background: none; border: 0; border-radius: 0;
+  display: inline-flex; align-items: center; gap: var(--sp-1); white-space: nowrap;
+  color: var(--amber);
+}
+.unlocked-badge::before, .mr-unlocked::before {
+  content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--amber); flex: none;
+}
 .locked-hint { border-style: solid !important; background: var(--bg-elevated) !important; }
 
 /* goal — sunken well with segmented slip progression */
