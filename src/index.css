@@ -2033,3 +2033,9 @@ button:not(#dp-press-skip):active:not(:disabled) { transform: scale(0.96); }
 @media (min-width: 1024px) {
   .earn-hero::after { display: none; }
 }
+
+/* Stage 3: let long settings summaries wrap under the name on narrow phones */
+@media (max-width: 480px) {
+  .sp-cat-line { flex-wrap: wrap; }
+  .sp-cat-sum { max-width: 100%; }
+}

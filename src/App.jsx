@@ -2890,19 +2890,7 @@ export default function App() {
                         <span className="app-sw sw-dark" aria-hidden="true" />
                         Dark
                       </button>
-                      <button type="button" className={`app-tile${theme.startsWith('glass') ? ' on' : ''}`} onClick={()=>setTheme(isDarkAppearance ? 'glass-dark' : 'glass-light')} aria-pressed={theme.startsWith('glass')}>
-                        <span className="app-sw sw-glass" aria-hidden="true" />
-                        Glass
-                      </button>
                     </div>
-                    {theme.startsWith('glass') && (
-                      <div className="app-flavor">
-                        <span className="app-flavor-lbl">Glass in</span>
-                        <button type="button" className={`app-flavor-btn${theme==='glass-light' ? ' on' : ''}`} onClick={()=>setTheme('glass-light')}>Light</button>
-                        <button type="button" className={`app-flavor-btn${theme==='glass-dark' ? ' on' : ''}`} onClick={()=>setTheme('glass-dark')}>Dark</button>
-                        <span className="app-flavor-note">Frosted surfaces · standard modes stay untouched</span>
-                      </div>
-                    )}
                   </div>
                 )}
 
