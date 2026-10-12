@@ -1959,3 +1959,77 @@ button:not(#dp-press-skip):active:not(:disabled) { transform: scale(0.96); }
   .an-tiles { grid-template-columns: repeat(4, 1fr); }
   .sp-page { max-width: 720px; }
 }
+
+/* ===== v26 Stage 2: dashboard layout (Image 2 direction) ===== */
+.dash-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-3); align-items: start; }
+.dash-cal { min-width: 0; }
+.dash-cal > .empty-hint { margin-top: var(--sp-3); }
+.dash-side { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+.dash-side > div[style] { margin-top: 0 !important; }
+
+/* earnings hero: white card on mobile, blue card on desktop */
+.earn-hero { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--sp-4); box-shadow: var(--shadow-sm); }
+.earn-title { font-size: 11px; letter-spacing: 0.14em; font-weight: 700; color: var(--text-3); text-transform: uppercase; margin-bottom: 8px; }
+.hero-meta { display: flex; flex-direction: column; gap: 6px; margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px dashed var(--border); }
+.hero-meta-row { display: flex; align-items: center; gap: 7px; font-size: var(--fs-xs); color: var(--text-3); }
+.hero-meta-row svg { flex: none; opacity: 0.75; }
+
+/* projected / goal card */
+.proj-card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--sp-4); box-shadow: var(--shadow-sm); }
+.proj-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: var(--sp-3); }
+.proj-left { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.proj-label { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-3); font-weight: 700; }
+.proj-amt { font-size: 24px; font-weight: 800; color: var(--text); letter-spacing: -0.01em; }
+.proj-sub { font-size: var(--fs-xs); color: var(--text-3); }
+.goal-ring { position: relative; flex: none; display: flex; align-items: center; justify-content: center; }
+.goal-ring-num { position: absolute; font-size: 12px; font-weight: 800; color: var(--text); }
+.proj-card .dp-fold { width: 100%; }
+
+/* calendar day circles: logged = pale blue, today/selected = solid blue */
+.cell.worked:not(.locked-cell):not(.is-leave):not(.is-leave-unpaid) .date-num {
+  background: var(--brand-wash); color: var(--brand-ink);
+  width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%; font-weight: 800;
+}
+.cell.worked.is-weekend:not(.locked-cell):not(.is-leave):not(.is-leave-unpaid) .date-num { color: var(--brand-ink); }
+.cell.worked.is-holiday:not(.locked-cell):not(.is-leave):not(.is-leave-unpaid) .date-num { background: var(--amber-wash); color: var(--amber); }
+.cell.is-today:not(.empty):not(.locked-cell) { box-shadow: none; }
+.cell.is-today:not(.empty):not(.locked-cell):not(.is-leave):not(.is-leave-unpaid) .date-num {
+  background: var(--brand); color: #fff;
+  width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%; font-weight: 800; box-shadow: 0 2px 8px rgba(7, 87, 232, 0.45);
+}
+.cell.is-overtime.is-today:not(.locked-cell) { box-shadow: inset 2.5px 0 0 var(--amber); }
+
+@media (min-width: 1024px) {
+  .dash-grid { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 20px; }
+  .earn-hero { background: linear-gradient(135deg, #0A2472 0%, var(--brand) 62%, #2E7CF6 100%); border-color: transparent; color: #fff; box-shadow: 0 10px 28px rgba(7, 87, 232, 0.28); }
+  .earn-hero .earn-title { color: rgba(255, 255, 255, 0.72); }
+  .earn-hero .summary-amount { color: #fff; }
+  .earn-hero .payday-line { color: rgba(255, 255, 255, 0.9); }
+  .earn-hero .payday-line b { color: #fff; }
+  .earn-hero .summary-sub { color: rgba(255, 255, 255, 0.82); }
+  .earn-hero .cloud-hint { color: #7CFFB2; }
+  .earn-hero .active-badge { background: rgba(0, 0, 0, 0.3); color: #7CFFB2; }
+  .earn-hero .final-badge { background: rgba(255, 255, 255, 0.2); color: #fff; }
+  .earn-hero .unlocked-badge { background: rgba(0, 0, 0, 0.32); color: #FFC857; }
+  .earn-hero .hero-meta { border-top-color: rgba(255, 255, 255, 0.25); }
+  .earn-hero .hero-meta-row { color: rgba(255, 255, 255, 0.85); }
+}
+
+/* Stage 2 fix: flatten legacy summary-top panel into earn-hero (single card) */
+.earn-hero { position: relative; overflow: hidden; }
+.earn-hero .summary-top { background: transparent; border: 0; border-radius: 0; box-shadow: none; padding: 0; overflow: visible; }
+.earn-hero .summary-top::before { display: none; }
+.earn-hero .summary-top::after { display: none; }
+.earn-hero::after {
+  content: ''; position: absolute; top: 20px; right: 20px;
+  width: 13px; height: 13px; border-radius: 4px;
+  border: 2.5px solid var(--daypay-navy);
+  box-shadow: 5px 5px 0 0 var(--daypay-green);
+  opacity: 0.9; pointer-events: none;
+}
+[data-theme="dark"] .earn-hero::after { border-color: #DCE4F2; }
+@media (min-width: 1024px) {
+  .earn-hero::after { display: none; }
+}

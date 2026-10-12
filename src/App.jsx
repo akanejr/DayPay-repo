@@ -162,6 +162,20 @@ const DEFAULT_LEAVE_TYPES = [
    Renders the same formatted value the app already computes; on change,
    counts smoothly to the new value (550ms, ease-out). Reduced motion =
    instant swap. Parent carries .dp-count so ux-motion skips its bump. */
+function GoalRing({ pct, size = 64 }) {
+  const r = (size - 12) / 2, c = 2 * Math.PI * r
+  const v = Math.max(0, Math.min(100, Number(pct) || 0))
+  return (
+    <div className="goal-ring" role="img" aria-label={`${v}% of goal`}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--border)" strokeWidth="8" />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={v >= 100 ? 'var(--daypay-green)' : 'var(--brand)'} strokeWidth="8" strokeLinecap="round" strokeDasharray={`${(v / 100) * c} ${c}`} transform={`rotate(-90 ${size / 2} ${size / 2})`} />
+      </svg>
+      <span className="goal-ring-num">{v}%</span>
+    </div>
+  )
+}
+
 function AnimatedAmount({ value }) {
   const ref = useRef(null)
   const prevRef = useRef(value)
@@ -2190,6 +2204,8 @@ export default function App() {
               <div className="info-banner">Tracking started in {startMonthKey ? (()=>{const {year, month}=parseMonthKey(startMonthKey); return `${getMonthName(month)} ${year}`})() : 'current month'}. No records before that.</div>
             )}
 
+            <div className="dash-grid">
+            <section className="dash-cal" aria-label="Work calendar">
             {isEditable || monthStatus==='locked' ? (
             <>
             <div className="weekdays">
@@ -2254,6 +2270,11 @@ export default function App() {
                 </div>
               )
             )}
+              {isEditable && (
+                <div className="empty-hint">
+                  Tap weekday to log OK, edit icon to OT. Weekends auto 2×. Holidays auto HOL 2×. Current month editable.
+                </div>
+              )}
             </>
             ) : (
               <div className="upcoming-note">
@@ -2261,8 +2282,10 @@ export default function App() {
                 <span>{monthStatus==='future' ? 'Calendar opens when the month starts.' : 'No records this month.'}</span>
               </div>
             )}
-
-            <div className="summary-card">
+            </section>
+            <div className="dash-side">
+            <section className="earn-hero" aria-label="Month earnings">
+              <div className="earn-title">{getMonthName(month)} earnings</div>
               <div className="summary-top">
                 <div className="summary-amount dp-count">
                   <AnimatedAmount value={monthlyStats.total} />
@@ -2284,6 +2307,41 @@ export default function App() {
                   {displayName ? `${displayName} · ` : ''}{monthlyStats.days} day{monthlyStats.days!==1?'s':''} worked{monthlyStats.leaveDays>0 ? `, ${monthlyStats.leaveDays} on leave` : ''} {monthStatus==='locked' ? (isUnlocked ? '· Unlocked' : '· Locked') : monthStatus==='active' ? '· Editable' : ''} {isSupabaseConfigured && user && <span className="cloud-hint">· cloud synced</span>}
                 </div>
 
+                <div className="hero-meta">
+                  {displayName ? (
+                  <span className="hero-meta-row">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="8" r="3.5" /><path d="M5 20c1.5-3.5 4-5 7-5s5.5 1.5 7 5" /></svg>
+                    <span>{displayName}</span>
+                  </span>
+                  ) : null}
+                  <span className="hero-meta-row">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M7 18.5a4 4 0 0 1-.4-7.98A5.5 5.5 0 0 1 17.3 8.6 3.5 3.5 0 0 1 17.5 15.6H17" /><path d="M6.5 18.5h11" /></svg>
+                    <span>{!isSupabaseConfigured ? 'Local only' : !user ? 'Not signed in' : syncStatus==='syncing' ? 'Syncing…' : syncStatus==='error' ? 'Sync error — will retry' : 'Cloud synced'}</span>
+                  </span>
+                </div>
+              </div>
+            </section>
+            <section className="proj-card" aria-label="Projection and details">
+              {monthStatus==='active' && (
+                <div className="proj-head">
+                  <div className="proj-left">
+                    <span className="proj-label">Projected</span>
+                    <span className="proj-amt mono">{formatNaira(paydayInfo.projectedTotal)}</span>
+                    <span className="proj-sub">+{formatNaira(Math.max(0, paydayInfo.projectedTotal - monthlyStats.total))} to go · {paydayInfo.daysToPayday > 0 ? `${paydayInfo.daysToPayday} day${paydayInfo.daysToPayday!==1?'s':''} to payday` : paydayInfo.daysToPayday===0 ? 'Payday today 🎉' : 'Payday passed'}</span>
+                  </div>
+                  {settings.salaryGoal > 0 && <GoalRing pct={goalProgress} />}
+                </div>
+              )}
+              {monthStatus==='locked' && settings.salaryGoal > 0 && (
+                <div className="proj-head">
+                  <div className="proj-left">
+                    <span className="proj-label">Goal progress</span>
+                    <span className="proj-amt mono">{goalProgress}%</span>
+                    <span className="proj-sub">of {formatNaira(settings.salaryGoal)} monthly goal</span>
+                  </div>
+                  <GoalRing pct={goalProgress} />
+                </div>
+              )}
                 {/* v18: read-only details collapsed by default — calendar closer to the top */}
                 <button type="button" className="dp-fold" onClick={()=>setSumFold(v=>!v)} aria-expanded={sumFold}>
                   <span className="dp-fold-main">
@@ -2348,7 +2406,6 @@ export default function App() {
                   </div>
                 )}
                 </>)}
-              </div>
               {sumFold && (<>
               <div className="summary-divider" />
               <div className="summary-rows">
@@ -2360,9 +2417,10 @@ export default function App() {
                 <div className="summary-row" style={{marginTop:4, paddingTop:10, borderTop:'1px dashed var(--border)'}}><span><strong>Monthly {monthStatus==='locked'?'Final Salary':'Total'}</strong></span><span className="mono" style={{fontWeight:800, color:'var(--daypay-green)', fontSize:'14px'}}>{formatNaira(monthlyStats.total)}</span></div>
               </div>
               </>)}
+              </section>
 
               <div style={{position:'relative', marginTop:14}} ref={shareMenuRef}>
-                <button className="btn-secondary" style={{width:'100%', height:40, display:'flex', alignItems:'center', justifyContent:'center', gap:8}} onClick={()=>{ setShowYearShareMenu(false); setShowShareMenu(v=>!v) }} disabled={(monthlyStats.days + monthlyStats.leaveDays)===0}>
+                <button className="btn-primary" style={{width:'100%', height:44, display:'flex', alignItems:'center', justifyContent:'center', gap:8}} onClick={()=>{ setShowYearShareMenu(false); setShowShareMenu(v=>!v) }} disabled={(monthlyStats.days + monthlyStats.leaveDays)===0}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
                   Share Payslip
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" style={{marginLeft:2, opacity:.6}}><polyline points="6 9 12 15 18 9"/></svg>
@@ -2391,11 +2449,6 @@ export default function App() {
                 )}
               </div>
 
-              {isEditable && (
-                <div className="empty-hint">
-                  Tap weekday to log OK, edit icon to OT. Weekends auto 2×. Holidays auto HOL 2×. Current month editable.
-                </div>
-              )}
               {!isEditable && <div className="empty-hint locked-hint" style={{display:'flex', alignItems:'center', justifyContent:'center', gap:6}}>
                 {monthStatus==='locked' ? (
                   isUnlocked ? (
@@ -2407,6 +2460,7 @@ export default function App() {
                   <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Future — not yet active.</>
                 ) : 'Before start.'}
               </div>}
+            </div>
             </div>
           </>
         ) : (
