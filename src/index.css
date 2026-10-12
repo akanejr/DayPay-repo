@@ -9,7 +9,13 @@
    ============================================================ */
 
 :root {
-  --daypay-navy: #0B1B32;
+  --daypay-navy: #092654;
+  --brand: #0757E8;
+  --brand-deep: #0A4FC4;
+  --brand-ink: #0757E8;
+  --brand-wash: #EAF1FE;
+  --success: #16A34A;
+  --success-bg: #D1FAE5;
   --daypay-green: #15803D;
   --daypay-navy-light: #132a4a;
   --daypay-green-light: #EAF6EF;
@@ -18,16 +24,16 @@
   /* Precision Futurism — warm paper light theme */
   --bg: #FFFFFF;
   --bg-elevated: #FFFFFF;
-  --bg-elevated-2: #F7F8FA;
+  --bg-elevated-2: #F7F9FC;
   --bg-cell: #FFFFFF;
-  --bg-cell-hover: #F0F7F2;
+  --bg-cell-hover: #EAF1FE;
   --bg-worked: #FFFFFF;
-  --bg-sunken: #F7F8FA;
-  --border: #E2E5E9;
+  --bg-sunken: #F7F9FC;
+  --border: #DCE4F0;
   --border-strong: #C9CED6;
   --border-light: #EEF0F3;
-  --text: var(--daypay-navy);
-  --text-2: #3D4A63;
+  --text: #101C38;
+  --text-2: #52627A;
   --text-3: #6B7280;
   --text-4: #98A2B3;
   --stamp-ok-bg: var(--daypay-navy);
@@ -69,6 +75,10 @@
 
 [data-theme="dark"] {
   --daypay-green: #16A34A; /* dark theme keeps its original green */
+  --brand: #0757E8;
+  --brand-deep: #3B82F6;
+  --brand-ink: #8FB3F7;
+  --brand-wash: #0E1F42;
   --bg: #080C16;
   --bg-elevated: #0D1528;
   --bg-elevated-2: #111B32;
@@ -237,8 +247,8 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   cursor: pointer; transition: all 0.18s;
 }
 .segmented button.active {
-  background: var(--daypay-navy); color: #ffffff; font-weight: 800;
-  box-shadow: 0 2px 8px rgba(11,27,50,0.2);
+  background: var(--brand); color: #ffffff; font-weight: 800;
+  box-shadow: 0 2px 8px rgba(7,87,232,0.28);
   letter-spacing: 0.01em;
 }
 [data-theme="dark"] .segmented button.active { background: #EDF1F7; color: var(--daypay-navy); box-shadow: none; }
@@ -829,8 +839,8 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .btn-secondary { background: var(--bg-elevated); color: var(--text-2); }
 .btn-secondary:hover { border-color: var(--border-strong); color: var(--text); }
-.btn-primary { background: var(--daypay-navy); color: #ffffff; border-color: var(--daypay-navy); }
-.btn-primary:hover { background: var(--daypay-navy-light); }
+.btn-primary { background: var(--brand); color: #ffffff; border-color: var(--brand); }
+.btn-primary:hover { background: var(--brand-deep); border-color: var(--brand-deep); }
 [data-theme="dark"] .btn-primary { background: #EDF1F7; border-color: #EDF1F7; color: var(--daypay-navy); }
 [data-theme="dark"] .btn-primary:hover { background: #ffffff; }
 .storage-info { margin-top: var(--sp-4); text-align: center; font-size: var(--fs-xs); color: var(--text-4); line-height: 1.5; font-weight: 500; }
@@ -1436,70 +1446,11 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .app-sw { width: 100%; height: 26px; border-radius: 7px; border: 1px solid var(--border); }
 .app-sw.sw-light { background: linear-gradient(180deg, #FFFFFF 55%, #F2F8F4 100%); }
 .app-sw.sw-dark { background: linear-gradient(180deg, #0C1425 55%, #080C16 100%); }
-.app-sw.sw-glass { background: radial-gradient(120% 90% at 85% -10%, rgba(34,222,94,.4), transparent 55%), radial-gradient(130% 100% at -10% 110%, rgba(30,64,110,.6), transparent 60%), #080C16; border-color: rgba(255,255,255,.28); }
 .app-flavor { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
 .app-flavor-lbl { font-size: var(--fs-xs); font-weight: 700; color: var(--text-3); }
 .app-flavor-btn { border: 1px solid var(--border); background: transparent; color: var(--text-2); border-radius: 999px; padding: var(--sp-2) var(--sp-3); font-size: var(--fs-xs); font-weight: 700; cursor: pointer; font-family: inherit; }
 .app-flavor-btn.on { border-color: var(--green-ink); color: var(--green-ink); background: var(--green-wash); }
 .app-flavor-note { font-size: var(--fs-2xs); color: var(--text-3); }
-
-/* ===== v18: GLASS appearance (opt-in) — frosted surfaces =====
-   Standard Light/Dark are untouched. Everything below applies only when
-   data-glass="on" AND the browser supports backdrop-filter; otherwise
-   glass mode renders as the standard theme (safe fallback). */
-@supports ((backdrop-filter: blur(4px)) or (-webkit-backdrop-filter: blur(4px))) {
-
-  /* canvas — glass needs something to blur */
-  [data-glass="on"][data-theme="dark"] .phone-frame {
-    background: radial-gradient(120% 90% at 88% -12%, rgba(22,163,74,.20), transparent 55%),
-                radial-gradient(130% 100% at -12% 112%, rgba(19,42,74,.55), transparent 62%),
-                #080C16;
-  }
-  [data-glass="on"][data-theme="light"] .phone-frame {
-    background: radial-gradient(95% 75% at 92% -6%, rgba(21,128,61,.09), transparent 60%),
-                radial-gradient(95% 85% at -6% 108%, rgba(59,130,246,.08), transparent 58%),
-                #FFFFFF;
-  }
-
-  /* header */
-  [data-glass="on"][data-theme="dark"] .header { background: rgba(8,12,22,.62); -webkit-backdrop-filter: blur(16px) saturate(150%); backdrop-filter: blur(16px) saturate(150%); border-bottom: 1px solid rgba(255,255,255,.08); }
-  [data-glass="on"][data-theme="light"] .header { background: rgba(255,255,255,.62); -webkit-backdrop-filter: blur(16px) saturate(150%); backdrop-filter: blur(16px) saturate(150%); border-bottom: 1px solid rgba(11,27,50,.07); }
-
-  /* hero panel */
-  [data-glass="on"][data-theme="dark"] .summary-top { background: rgba(13,21,40,.52); -webkit-backdrop-filter: blur(18px) saturate(150%); backdrop-filter: blur(18px) saturate(150%); border-color: rgba(255,255,255,.10); box-shadow: 0 18px 40px rgba(2,6,16,.45); }
-  [data-glass="on"][data-theme="light"] .summary-top { background: rgba(255,255,255,.55); -webkit-backdrop-filter: blur(16px) saturate(140%); backdrop-filter: blur(16px) saturate(140%); border-color: rgba(255,255,255,.85); box-shadow: 0 12px 30px rgba(11,27,50,.10), inset 0 0 0 1px rgba(226,229,233,.9); }
-
-  /* details/settings folds */
-  [data-glass="on"][data-theme="dark"] .dp-fold { background: rgba(255,255,255,.055); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border-color: rgba(255,255,255,.09); }
-  [data-glass="on"][data-theme="light"] .dp-fold { background: rgba(255,255,255,.55); -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px); border-color: rgba(226,229,233,.8); }
-
-  /* calendar cells — light blur only, cheap on the GPU; stamps stay solid */
-  [data-glass="on"][data-theme="dark"] .cell { background: rgba(255,255,255,.05); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); border: 1px solid rgba(255,255,255,.07); }
-  [data-glass="on"][data-theme="dark"] .cell.is-weekend { background: rgba(22,163,74,.12); border-color: rgba(74,222,128,.16); }
-  [data-glass="on"][data-theme="light"] .cell { background: rgba(255,255,255,.52); -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px); border: 1px solid rgba(226,229,233,.75); }
-  [data-glass="on"][data-theme="light"] .cell.is-weekend { background: rgba(21,128,61,.07); border-color: rgba(21,128,61,.14); }
-
-  /* future chips */
-  [data-glass="on"][data-theme="dark"] .future-chip { background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08); }
-  [data-glass="on"][data-theme="light"] .future-chip { background: rgba(255,255,255,.5); border: 1px solid rgba(226,229,233,.8); }
-
-  /* celebration card — navy glass in both flavors */
-  [data-glass="on"] .dp-toast { background: rgba(11,27,50,.58); -webkit-backdrop-filter: blur(20px) saturate(160%); backdrop-filter: blur(20px) saturate(160%); border: 1px solid rgba(255,255,255,.16); }
-
-  /* modal sheets + menus */
-  [data-glass="on"][data-theme="dark"] .modal { background: rgba(13,21,40,.66); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border-color: rgba(255,255,255,.10); }
-  [data-glass="on"][data-theme="light"] .modal { background: rgba(255,255,255,.66); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border-color: rgba(255,255,255,.9); box-shadow: 0 18px 44px rgba(11,27,50,.16); }
-  [data-glass="on"][data-theme="dark"] .hamburger-dropdown { background: rgba(13,21,40,.72); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); border-color: rgba(255,255,255,.10); }
-  [data-glass="on"][data-theme="light"] .hamburger-dropdown { background: rgba(255,255,255,.72); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); border-color: rgba(226,229,233,.9); }
-  [data-glass="on"][data-theme="dark"] .share-dropdown { background: rgba(13,21,40,.72); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); border-color: rgba(255,255,255,.10); }
-  [data-glass="on"][data-theme="light"] .share-dropdown { background: rgba(255,255,255,.72); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); border-color: rgba(226,229,233,.9); }
-
-  /* settings cards */
-  [data-glass="on"][data-theme="dark"] .sp-card { background: rgba(13,21,40,.5); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border-color: rgba(255,255,255,.09); }
-  [data-glass="on"][data-theme="light"] .sp-card { background: rgba(255,255,255,.55); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
-  [data-glass="on"][data-theme="dark"] .sp-rh-row { background: rgba(255,255,255,.045); }
-  [data-glass="on"][data-theme="light"] .sp-rh-row { background: rgba(255,255,255,.5); }
-}
 
 /* ===== v18: "Choose theme" inline picker (hamburger menu) ===== */
 .hamburger-item .hamburger-chev { margin-left: auto; font-size: var(--fs-xs); color: var(--text-3); transition: transform 0.15s ease; }
@@ -1515,8 +1466,6 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .theme-sw { width: 20px; height: 20px; border-radius: 6px; border: 1px solid var(--border); flex: none; }
 .theme-sw.sw-light { background: linear-gradient(180deg, #FFFFFF 55%, #F2F8F4 100%); }
 .theme-sw.sw-dark { background: linear-gradient(180deg, #0C1425 55%, #080C16 100%); }
-.theme-sw.sw-glass-dark { background: radial-gradient(120% 90% at 85% -10%, rgba(34,222,94,.45), transparent 55%), radial-gradient(130% 100% at -10% 110%, rgba(30,64,110,.65), transparent 60%), #080C16; border-color: rgba(255,255,255,.3); }
-.theme-sw.sw-glass-light { background: radial-gradient(95% 75% at 92% -6%, rgba(21,128,61,.14), transparent 60%), linear-gradient(180deg, #FFFFFF, #F2F8F4); }
 .theme-check { margin-left: auto; color: var(--green-ink); font-weight: 800; }
 
 /* ===== v18-C: Export my data (Settings → Your data) ===== */
@@ -1897,3 +1846,6 @@ button:not(#dp-press-skip):active:not(:disabled) { transform: scale(0.96); }
 .dp-rem-cta { height: 46px; border-radius: 13px; font-weight: 700; }
 .dp-rem-note { font-size: var(--fs-2xs); color: var(--text-4); line-height: 1.5; margin-top: var(--sp-2); }
 .dp-rem-dont { margin-top: 2px; font-size: var(--fs-xs); color: var(--text-4); text-align: center; }
+
+/* v26 a11y — visible keyboard focus */
+:focus-visible { outline: 2px solid var(--brand-ink); outline-offset: 2px; border-radius: 6px; }

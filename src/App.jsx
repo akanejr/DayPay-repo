@@ -5,6 +5,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
 import { sortPeriods, migratePeriods, rateFor as rateForPeriod } from './lib/rates'
+import { lagosNow, lagosKey } from './lib/tz'
 import { normalizeReminder, nextReminder, buildReminderIcs } from './lib/reminders'
 import jsPDF from 'jspdf'
 import { payslipModel, breakdownRows, attendanceRows, calcLines, explainerKind, fmtMoney, fmtEquiv, fmtStamp } from './lib/payslip'
@@ -44,13 +45,11 @@ function shortDate(key) {
 const THEME_OPTIONS = [
   { id: 'light', label: 'Light', sw: 'sw-light' },
   { id: 'dark', label: 'Dark', sw: 'sw-dark' },
-  { id: 'glass-dark', label: 'Glass · Dark', sw: 'sw-glass-dark' },
-  { id: 'glass-light', label: 'Glass · Light', sw: 'sw-glass-light' },
 ]
 
 // v18-C: Export my data — one tap in Settings downloads the raw record.
 // JSON = every record + setting (a full backup); CSV = one row per worked day.
-function fileDateStamp(d = new Date()) {
+function fileDateStamp(d = lagosNow()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 function sortedDayRecords(attendance) {
@@ -318,12 +317,12 @@ export default function App() {
   const [theme, setTheme] = useState(() => {
     try {
       const v = localStorage.getItem('work_tracker_theme')
-      return ['light', 'dark', 'glass-light', 'glass-dark'].includes(v) ? v : 'light'
+      if (v === 'glass-dark') return 'dark' // v26: retired glass flavors migrate forward
+      if (v === 'glass-light') return 'light'
+      return ['light', 'dark'].includes(v) ? v : 'light'
     } catch { return 'light' }
   })
-  // v18 glass appearance: Glass is a third mode with a light/dark flavor.
-  // Standard light/dark keep their exact look; glass only adds data-glass="on".
-  const isDarkAppearance = theme === 'dark' || theme === 'glass-dark'
+  const isDarkAppearance = theme === 'dark'
 
   const [showForgot, setShowForgot] = useState(false)
   const [forgotEmail, setForgotEmail] = useState('')
@@ -362,9 +361,8 @@ export default function App() {
   const splashStartRef = useRef(Date.now())
 
   useEffect(() => {
-    const glass = theme.startsWith('glass')
-    document.documentElement.setAttribute('data-theme', glass ? theme.slice(6) : theme)
-    document.documentElement.setAttribute('data-glass', glass ? 'on' : 'off')
+    document.documentElement.setAttribute('data-theme', theme)
+    document.documentElement.setAttribute('data-glass', 'off')
     try { localStorage.setItem('work_tracker_theme', theme) } catch {}
   }, [theme])
 
@@ -377,9 +375,9 @@ export default function App() {
     return () => clearTimeout(t)
   }, [loaded, authLoading])
 
-  const [realCurrentDate, setRealCurrentDate] = useState(() => new Date())
+  const [realCurrentDate, setRealCurrentDate] = useState(() => lagosNow())
   useEffect(() => {
-    const updateReal = () => setRealCurrentDate(new Date())
+    const updateReal = () => setRealCurrentDate(lagosNow())
     const onVis = () => { if (document.visibilityState === 'visible') updateReal() }
     document.addEventListener('visibilitychange', onVis)
     const iv = setInterval(updateReal, 60*1000)
@@ -789,7 +787,7 @@ export default function App() {
     return { model, months }
   }, [attendance, year])
 
-  const todayKey = formatDateKey(new Date())
+  const todayKey = lagosKey()
 
   // v18 rate periods — the rate in force on a given day (falls back to
   // current settings while periods are not yet migrated/loaded)
@@ -1560,7 +1558,7 @@ export default function App() {
     for (let p = 1; p <= pages; p++) {
       doc.setPage(p)
       F('normal', 7.5); C(FAINT)
-      doc.text(`DayPay — Know what your work is worth. · Generated ${fmtStamp()} · ${footName}${started}`, 14, 285)
+      doc.text(`DayPay — Know what your work is worth. · Generated ${fmtStamp(lagosNow())} · ${footName}${started}`, 14, 285)
       doc.text(`Page ${p} of ${pages}`, 196, 285, { align: 'right' })
       doc.text('© 2026 Akaninyene. All rights reserved.', 14, 289.5)
     }
@@ -1826,7 +1824,7 @@ export default function App() {
     for (let p = 1; p <= pages; p++) {
       doc.setPage(p)
       F('normal', 7.5); C(FAINT)
-      doc.text(`DayPay — Know what your work is worth. · Generated ${fmtStamp()} · ${footName}${started}`, 14, 285)
+      doc.text(`DayPay — Know what your work is worth. · Generated ${fmtStamp(lagosNow())} · ${footName}${started}`, 14, 285)
       doc.text(`Page ${p} of ${pages}`, 196, 285, { align: 'right' })
       doc.text('© 2026 Akaninyene. All rights reserved.', 14, 289.5)
     }
