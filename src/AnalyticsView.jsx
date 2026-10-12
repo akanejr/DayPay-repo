@@ -6,7 +6,7 @@ import { payslipModel, fmtEquiv } from './lib/payslip'
    window from tracking start, max 12 months ending with the current
    month). Figures reuse payslipModel, so types/amounts match payslips. */
 const TYPE_META = [
-  { key: 'regular', label: 'Regular', color: '#0757E8' },
+  { key: 'regular', label: 'Regular', color: 'var(--an-regular)' },
   { key: 'weekend', label: 'Weekend 2×', color: '#16A34A' },
   { key: 'overtime', label: 'Overtime', color: '#B45309' },
   { key: 'holiday', label: 'Holiday', color: '#7C3AED' },
@@ -99,7 +99,7 @@ export default function AnalyticsView({ attendance, startMonthKey, realYear, rea
             {donut.filter(s => s.frac > 0).map(s => (
               <circle
                 key={s.key} cx="70" cy="70" r={R} fill="none"
-                stroke={meta[s.key].color} strokeWidth="20"
+                strokeWidth="20" style={{ stroke: meta[s.key].color }}
                 strokeDasharray={`${s.dash} ${CIRC - s.dash}`}
                 strokeDashoffset={s.off} transform="rotate(-90 70 70)"
                 strokeLinecap="butt"

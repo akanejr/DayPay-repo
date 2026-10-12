@@ -10,10 +10,10 @@
 
 :root {
   --daypay-navy: #092654;
-  --brand: #0757E8;
-  --brand-deep: #0A4FC4;
-  --brand-ink: #0757E8;
-  --brand-wash: #EAF1FE;
+  --brand: #0B1B32;
+  --brand-deep: var(--daypay-navy-light);
+  --brand-ink: #15803D;
+  --brand-wash: #EAF6EF;
   --success: #16A34A;
   --success-bg: #D1FAE5;
   --daypay-green: #15803D;
@@ -26,7 +26,7 @@
   --bg-elevated: #FFFFFF;
   --bg-elevated-2: #F7F9FC;
   --bg-cell: #FFFFFF;
-  --bg-cell-hover: #EAF1FE;
+  --bg-cell-hover: #F0F7F2;
   --bg-worked: #FFFFFF;
   --bg-sunken: #F7F9FC;
   --border: #DCE4F0;
@@ -77,10 +77,10 @@
 
 [data-theme="dark"] {
   --daypay-green: #16A34A; /* dark theme keeps its original green */
-  --brand: #0757E8;
-  --brand-deep: #3B82F6;
-  --brand-ink: #8FB3F7;
-  --brand-wash: #0E1F42;
+  --brand: #EDF1F7;
+  --brand-deep: #ffffff;
+  --brand-ink: #4ADE80;
+  --brand-wash: #0C1F14;
   --bg: #080C16;
   --bg-elevated: #0D1528;
   --bg-elevated-2: #111B32;
@@ -251,7 +251,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .segmented button.active {
   background: var(--brand); color: #ffffff; font-weight: 800;
-  box-shadow: 0 2px 8px rgba(7,87,232,0.28);
+  box-shadow: 0 2px 8px rgba(11,27,50,0.28);
   letter-spacing: 0.01em;
 }
 [data-theme="dark"] .segmented button.active { background: #EDF1F7; color: var(--daypay-navy); box-shadow: none; }
@@ -1997,13 +1997,13 @@ button:not(#dp-press-skip):active:not(:disabled) { transform: scale(0.96); }
 .cell.is-today:not(.empty):not(.locked-cell):not(.is-leave):not(.is-leave-unpaid) .date-num {
   background: var(--brand); color: #fff;
   width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
-  border-radius: 50%; font-weight: 800; box-shadow: 0 2px 8px rgba(7, 87, 232, 0.45);
+  border-radius: 50%; font-weight: 800; box-shadow: 0 2px 8px rgba(11, 27, 50, 0.45);
 }
 .cell.is-overtime.is-today:not(.locked-cell) { box-shadow: inset 2.5px 0 0 var(--amber); }
 
 @media (min-width: 1024px) {
   .dash-grid { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 20px; }
-  .earn-hero { background: linear-gradient(135deg, #0A2472 0%, var(--brand) 62%, #2E7CF6 100%); border-color: transparent; color: #fff; box-shadow: 0 10px 28px rgba(7, 87, 232, 0.28); }
+  .earn-hero { background: linear-gradient(135deg, #0B1B32 0%, #12294E 55%, #1E3A66 100%); border-color: transparent; color: #fff; box-shadow: 0 10px 28px rgba(11, 27, 50, 0.28); }
   .earn-hero .earn-title { color: rgba(255, 255, 255, 0.72); }
   .earn-hero .summary-amount { color: #fff; }
   .earn-hero .payday-line { color: rgba(255, 255, 255, 0.9); }
@@ -2038,4 +2038,12 @@ button:not(#dp-press-skip):active:not(:disabled) { transform: scale(0.96); }
 @media (max-width: 480px) {
   .sp-cat-line { flex-wrap: wrap; }
   .sp-cat-sum { max-width: 100%; }
+}
+
+/* Brand restore: theme-aware Regular-type color + dark-mode legibility */
+:root { --an-regular: #0B1B32; }
+[data-theme="dark"] { --an-regular: #EDF1F7; }
+[data-theme="dark"] .cell.is-today:not(.empty):not(.locked-cell):not(.is-leave):not(.is-leave-unpaid) .date-num { color: #0B1B32; }
+@media (min-width: 1024px) {
+  [data-theme="dark"] .earn-hero { border-color: rgba(255, 255, 255, 0.12); }
 }
