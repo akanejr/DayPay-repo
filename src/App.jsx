@@ -6,6 +6,8 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
 import { sortPeriods, migratePeriods, rateFor as rateForPeriod } from './lib/rates'
 import { lagosNow, lagosKey } from './lib/tz'
+import EarningsView from './EarningsView'
+import AnalyticsView from './AnalyticsView'
 import { normalizeReminder, nextReminder, buildReminderIcs } from './lib/reminders'
 import jsPDF from 'jspdf'
 import { payslipModel, breakdownRows, attendanceRows, calcLines, explainerKind, fmtMoney, fmtEquiv, fmtStamp } from './lib/payslip'
@@ -45,6 +47,22 @@ function shortDate(key) {
 const THEME_OPTIONS = [
   { id: 'light', label: 'Light', sw: 'sw-light' },
   { id: 'dark', label: 'Dark', sw: 'sw-dark' },
+]
+
+// v26 shell — shared brand mark + primary destinations (sidebar + bottom nav).
+function LogoMark({ size = 27 }) {
+  return (
+    <svg className="hdr-mark" viewBox="0 0 48 48" width={size} height={size} role="img" aria-label="DayPay logo">
+      <rect x="15" y="16" width="26" height="26" rx="7" fill="var(--daypay-green)"/>
+      <rect x="7" y="8" width="26" height="26" rx="7" fill="var(--logo-face)" stroke="var(--daypay-navy)" strokeWidth="4"/>
+    </svg>
+  )
+}
+const NAV_ITEMS = [
+  { id: 'dashboard', label: 'Dashboard', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4.5" width="18" height="16" rx="2.5"/><line x1="3" y1="9.5" x2="21" y2="9.5"/><line x1="8" y1="2.5" x2="8" y2="6.5"/><line x1="16" y1="2.5" x2="16" y2="6.5"/></svg> },
+  { id: 'earnings', label: 'Earnings', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M20 7H5a2 2 0 0 1 0-4h13v4"/><path d="M20 7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5"/><circle cx="17.5" cy="14" r="1.2" fill="currentColor" stroke="none"/></svg> },
+  { id: 'analytics', label: 'Analytics', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><line x1="5" y1="20" x2="5" y2="12"/><line x1="12" y1="20" x2="12" y2="5"/><line x1="19" y1="20" x2="19" y2="9"/></svg> },
+  { id: 'settings', label: 'Settings', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 7h2.8M11.2 7H20"/><circle cx="9" cy="7" r="2.1"/><path d="M4 12h8.6M17 12h3"/><circle cx="14.8" cy="12" r="2.1"/><path d="M4 17h3.8M12.2 17H20"/><circle cx="10" cy="17" r="2.1"/></svg> },
 ]
 
 // v18-C: Export my data — one tap in Settings downloads the raw record.
@@ -277,6 +295,7 @@ function time12(t) {
 export default function App() {
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const [view, setView] = useState('month')
+  const [destination, setDestination] = useState('dashboard') // v26 shell
   const [attendance, setAttendance] = useState({})
   const [settings, setSettings] = useState({ dailyRate: 16000, weekendMultiplier: 2, holidayMultiplier: 2, salaryGoal: 500000, paydayDay: 0, ratePeriods: [], reminder: null })
   const [startMonthKey, setStartMonthKey] = useState(null)
@@ -338,9 +357,6 @@ export default function App() {
   const [unlockEditConfirm, setUnlockEditConfirm] = useState(null)
   const [editingDate, setEditingDate] = useState(null)
 
-  const [showHamburgerMenu, setShowHamburgerMenu] = useState(false)
-  const [showThemeMenu, setShowThemeMenu] = useState(false) // v18: "Choose theme" inline picker in the hamburger menu
-  const hamburgerMenuRef = useRef(null)
 
   const [showShareMenu, setShowShareMenu] = useState(false)
   const shareMenuRef = useRef(null)
@@ -349,7 +365,6 @@ export default function App() {
   const yearShareMenuRef = useRef(null)
 
   // v22: exit-animation state for every panel that opens and closes
-  const hambX = useExit(showHamburgerMenu, 240)
   const shareX = useExit(showShareMenu, 240)
   const yearShareX = useExit(showYearShareMenu, 240)
   const settingsX = useExit(showSettings, 380)
@@ -446,15 +461,6 @@ export default function App() {
     if (holidaysMap[key]) return holidaysMap[key]
     return isHolidayDayFallback(dateObj)
   }
-
-  useEffect(() => {
-    if (!showHamburgerMenu) { setShowThemeMenu(false); return }
-    const handleClickOutside = (e) => {
-      if (hamburgerMenuRef.current && !hamburgerMenuRef.current.contains(e.target)) setShowHamburgerMenu(false)
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [showHamburgerMenu])
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -674,6 +680,7 @@ export default function App() {
   const isMonthKeyUnlocked = (k) => (settings.unlockedMonths || []).includes(k)
   const isUnlocked = monthStatus === 'locked' && isMonthKeyUnlocked(viewMonthKey)
   const displayStatus = isUnlocked ? 'unlocked' : monthStatus
+  const activeDest = showSettings ? 'settings' : destination // v26: settings overlay highlights Settings
 
   const calendarData = useMemo(() => {
     const firstDay = new Date(year, month, 1)
@@ -1234,6 +1241,15 @@ export default function App() {
     setCurrentDate(new Date(year, mIdx,1)); setView('month')
   }
   function goToCurrentMonth(){ setCurrentDate(new Date(realYear, realMonth, 1)); setView('month') }
+  // v26 shell navigation (settings keeps its existing overlay; it highlights while open)
+  function navGo(id) {
+    if (id === 'settings') { setShowSettings(true); return }
+    setDestination(id)
+  }
+  function openYearMonth(y, m) {
+    setCurrentDate(new Date(y, m, 1)); setView('month'); setDestination('dashboard')
+    window.scrollTo({ top: 0 })
+  }
 
   function updateLtDraft(i, patch) { setLtDraft(d => (d || []).map((t, idx) => idx === i ? { ...t, ...patch } : t)) }
   function removeLtDraft(i) { setLtDraft(d => (d || []).filter((_, idx) => idx !== i)) }
@@ -2033,79 +2049,50 @@ export default function App() {
       )}
 
       {/* v22: the app frame stays mounted; Settings slides over it as a fixed layer */}
+      <div className="dp-topstrip" aria-hidden="true" />
+      <div className="dp-shell">
+      <aside className="dp-sidebar" aria-label="Primary">
+        <div className="dp-brand">
+          <LogoMark size={34} />
+          <span className="dp-brand-text">
+            <span className="wordmark"><span className="wm-day">Day</span><span className="wm-pay">Pay</span></span>
+            <span className="dp-tagline">Know what your work is worth</span>
+          </span>
+        </div>
+        <nav className="dp-nav">
+          {NAV_ITEMS.map(n => (
+            <button key={n.id} type="button" className={`dp-nav-item${activeDest===n.id ? ' active' : ''}`} aria-current={activeDest===n.id ? 'page' : undefined} onClick={()=>navGo(n.id)}>
+              {n.icon}<span>{n.label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="dp-side-foot">
+          {isSupabaseConfigured && (user ? (
+            <button type="button" className="btn-secondary" style={{width:'100%'}} onClick={handleLogout}>Sign out</button>
+          ) : (
+            <button type="button" className="btn-secondary" style={{width:'100%'}} onClick={()=>{setShowAuth(true); setAuthMode('signin')}}>Sign in</button>
+          ))}
+        </div>
+      </aside>
       <div className="phone-frame">
         <header className="header">
           <div className="header-left">
             <span className="hdr-lockup" title="DayPay - Know what your work is worth.">
-              <svg className="hdr-mark" viewBox="0 0 48 48" width="27" height="27" role="img" aria-label="DayPay logo">
-                <rect x="15" y="16" width="26" height="26" rx="7" fill="var(--daypay-green)"/>
-                <rect x="7" y="8" width="26" height="26" rx="7" fill={isDarkAppearance ? '#0D1424' : '#FFFFFF'} stroke={isDarkAppearance ? '#2A3550' : '#0B1B32'} strokeWidth="4"/>
-              </svg>
+              <LogoMark size={27} />
               <span className="wordmark"><span className="wm-day">Day</span><span className="wm-pay">Pay</span></span>
             </span>
             {isSupabaseConfigured && syncStatus!=='idle' && (
               <span className={`sync-badge ${syncStatus}`}>{syncStatus==='syncing'?'syncing…':syncStatus==='synced'?'synced ✓':'error'}</span>
             )}
           </div>
-          <div className="header-right" style={{display:'flex', gap:8, alignItems:'center'}} ref={hamburgerMenuRef}>
-            <button className="icon-btn hamburger-btn" onClick={()=>setShowHamburgerMenu(!showHamburgerMenu)} aria-label="Menu" title="Menu">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          <div className="header-right">
+            <button className="icon-btn theme-btn" onClick={()=>setTheme(theme==='dark'?'light':'dark')} aria-label={theme==='dark'?'Switch to light mode':'Switch to dark mode'} title={theme==='dark'?'Light mode':'Dark mode'}>
+              {theme==='dark' ? (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><line x1="4.2" y1="4.2" x2="6.3" y2="6.3"/><line x1="17.7" y1="17.7" x2="19.8" y2="19.8"/><line x1="4.2" y1="19.8" x2="6.3" y2="17.7"/><line x1="17.7" y1="6.3" x2="19.8" y2="4.2"/></svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+              )}
             </button>
-            {hambX.mounted && (
-              <div className={`hamburger-dropdown${hambX.closing ? ' dd-out' : ' dd-in'}`}>
-                {user && displayName && (
-                  <div className="hamburger-user" style={{'--i': 0}}>
-                    <div className="welcome-avatar" style={{width:32, height:32, fontSize:13}}>{displayName.charAt(0).toUpperCase()}</div>
-                    <div>
-                      <div style={{fontWeight:700, fontSize:13}}>{displayName}</div>
-                      <div style={{fontSize:10, color:'var(--text-3)', fontFamily:'Geist Mono, monospace'}}>{user.email}</div>
-                    </div>
-                  </div>
-                )}
-                <button className="hamburger-item" style={{'--i': 1}} onClick={()=>setShowThemeMenu(v=>!v)} aria-expanded={showThemeMenu}>
-                  <span className="hamburger-icon">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z"/><path d="M19 15l.7 1.8 1.8.7-1.8.7L19 19.7l-.7-1.8-1.8-.7 1.8-.7L19 15Z"/></svg>
-                  </span>
-                  <span>Choose theme</span>
-                  <span className={`hamburger-chev${showThemeMenu ? ' open' : ''}`} aria-hidden="true">▸</span>
-                </button>
-                <div className={`theme-picker${showThemeMenu ? ' open' : ''}`}>
-                  <div className="theme-picker-inner">
-                    <div className="theme-picker-visual">
-                      {THEME_OPTIONS.map(opt => (
-                        <button type="button" key={opt.id} data-opt={opt.id} className={`theme-opt${theme===opt.id ? ' on' : ''}`} onClick={()=>setTheme(opt.id)} aria-pressed={theme===opt.id}>
-                          <span className={`theme-sw ${opt.sw}`} aria-hidden="true" />
-                          <span>{opt.label}</span>
-                          {theme===opt.id && <span className="theme-check" aria-hidden="true">✓</span>}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                {isSupabaseConfigured && (
-                  user ? (
-                    <button className="hamburger-item" style={{'--i': 2}} onClick={()=>{handleLogout(); setShowHamburgerMenu(false)}}>
-                      <span className="hamburger-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span>
-                      <span>Sign out</span>
-                    </button>
-                  ) : (
-                    <button className="hamburger-item" style={{'--i': 2}} onClick={()=>{setShowAuth(true); setAuthMode('signin'); setShowHamburgerMenu(false)}}>
-                      <span className="hamburger-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M15 3h4a5 5 0 0 1 5 5v8a5 5 0 0 1-5 5h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg></span>
-                      <span>Sign in to DayPay</span>
-                    </button>
-                  )
-                )}
-                <button className="hamburger-item" style={{'--i': 3}} onClick={()=>{setShowSettings(true); setShowHamburgerMenu(false)}}>
-                  <span className="hamburger-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 6h2.8M11.2 6H20"/><circle cx="9" cy="6" r="2.1"/><path d="M4 12h8.6M17 12h3"/><circle cx="14.8" cy="12" r="2.1"/><path d="M4 18h3.8M12.2 18H20"/><circle cx="10" cy="18" r="2.1"/></svg></span>
-                  <span>Settings</span>
-                </button>
-                {isSupabaseConfigured && syncStatus!=='idle' && (
-                  <div className="hamburger-sync">
-                    <span className={`sync-badge ${syncStatus}`} style={{marginLeft:0}}>{syncStatus==='syncing'?'syncing…':syncStatus==='synced'?'synced ✓':'error'}</span>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         </header>
 
@@ -2123,16 +2110,27 @@ export default function App() {
           </div>
         )}
 
-        {user && displayName && (
-          <div className="welcome-banner">
-            <div className="welcome-avatar">{displayName.charAt(0).toUpperCase()}</div>
-            <div className="welcome-text">
-              <span className="welcome-name">Hi, {displayName}</span>
-              <span className="welcome-sub">{user.email} · {startMonthKey ? `Started ${startMonthKey}` : ''}</span>
-            </div>
-          </div>
-        )}
+        <div className="dp-profile-row">
+          <button type="button" className="dp-profile" onClick={()=>{ spCatInitRef.current='profile'; setShowSettings(true) }} aria-label="Open profile settings">
+            <span className="dp-avatar" aria-hidden="true">{(displayName || 'D').charAt(0).toUpperCase()}</span>
+            <span className="dp-profile-main">
+              <span className="dp-profile-name">{displayName || 'DayPay Member'}</span>
+              <span className="dp-profile-sub">{user?.email ? `${user.email} · ` : 'Local only · '}{startMonthKey ? `Member since ${startMonthKey}` : ''}</span>
+            </span>
+            <span className="dp-profile-chev" aria-hidden="true">▸</span>
+          </button>
+          {isSupabaseConfigured && (user ? (
+            <button className="icon-btn dp-auth-btn" onClick={handleLogout} aria-label="Sign out" title="Sign out">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            </button>
+          ) : (
+            <button className="icon-btn dp-auth-btn" onClick={()=>{setShowAuth(true); setAuthMode('signin')}} aria-label="Sign in to DayPay" title="Sign in">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M15 3h4a5 5 0 0 1 5 5v8a5 5 0 0 1-5 5h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+            </button>
+          ))}
+        </div>
 
+        {destination==='dashboard' ? (<>
         <div className="seg-wrap">
           <div className="segmented">
             <button className={view==='month'?'active':''} onClick={()=>setView('month')}>Month</button>
@@ -2561,7 +2559,28 @@ export default function App() {
         <div className="footer">
           <span className="footer-dot" /> {displayName ? `${displayName} · ` : ''}{settings.dailyRate.toLocaleString('en-NG')} / day · {settings.weekendMultiplier}× OT/Hol/Weekend {monthStatus==='locked' ? (isUnlocked ? '· unlocked' : '· locked') : monthStatus==='active' ? '· active' : ''} {isSupabaseConfigured && user ? '· synced' : '· local'} · PWA ready · © 2026 Akaninyene
         </div>
+        </>) : destination==='earnings' ? (
+          <EarningsView
+            attendance={attendance} startMonthKey={startMonthKey} realYear={realYear} realMonth={realMonth}
+            statusFor={getMonthStatus} unlockedFor={isMonthKeyUnlocked} onOpenMonth={openYearMonth}
+            formatNaira={formatNaira} getMonthName={getMonthName}
+          />
+        ) : (
+          <AnalyticsView
+            attendance={attendance} startMonthKey={startMonthKey} realYear={realYear} realMonth={realMonth}
+            formatNaira={formatNaira} getMonthName={getMonthName}
+          />
+        )}
       </div>
+      </div>
+
+      <nav className="dp-bottomnav" aria-label="Primary">
+        {NAV_ITEMS.map(n => (
+          <button key={n.id} type="button" className={`dp-nav-item${activeDest===n.id ? ' active' : ''}`} aria-current={activeDest===n.id ? 'page' : undefined} onClick={()=>navGo(n.id)}>
+            {n.icon}<span>{n.label}</span>
+          </button>
+        ))}
+      </nav>
 
       {editX.mounted && (
         <div className={`modal-overlay${editX.closing ? ' mo-out' : ''}`} onClick={()=>{setEditingKey(null); setEditingDate(null)}}>
